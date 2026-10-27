@@ -2,32 +2,32 @@
 
 Base URL: `http://127.0.0.1:8787`
 
-- Tất cả endpoint dữ liệu nằm dưới `/api`.
-- Request/response là JSON (`content-type: application/json`), trừ thumbnail.
-- Nếu server đặt `VB_TOKEN`, thêm header:
+- All data endpoints live under `/api`.
+- Requests and responses are JSON (`content-type: application/json`), except thumbnails.
+- If the server sets `VB_TOKEN`, add the header:
 
 ```http
 x-vb-token: <token>
 ```
 
-- Lỗi:
+- Errors:
 
 ```json
 { "error": "profile is not running", "statusCode": 400 }
 ```
 
-| Mã | Khi nào |
+| Code | When |
 | --- | --- |
 | 200 | OK |
-| 201 | Tạo mới (profile, duplicate) |
-| 204 | Thumbnail chưa có frame |
-| 400 | Input sai / thao tác không hợp lệ (tab index, URL thiếu…) |
-| 401 | Thiếu/sai `x-vb-token` |
-| 404 | Không có profile/route |
-| 500 | Lỗi Chrome, proxy, VPN, hệ thống |
+| 201 | Created (profile, duplicate) |
+| 204 | Thumbnail has no frame yet |
+| 400 | Invalid input / invalid operation (tab index, missing URL, …) |
+| 401 | Missing or invalid `x-vb-token` |
+| 404 | No such profile/route |
+| 500 | Chrome, proxy, VPN, or system error |
 
-`id` là UUID. Index tab là **vị trí hiện tại** trong `context.pages()`; luôn đọc lại
-`status.tabs` sau mỗi thao tác.
+`id` is a UUID. The tab index is the **current position** in `context.pages()`; always
+re-read `status.tabs` after every operation.
 
 ---
 
@@ -69,7 +69,7 @@ x-vb-token: <token>
 
 ### `GET /api/export`
 
-Tải JSON metadata tất cả profile (không có runtime, không có cookie):
+Download the metadata JSON for all profiles (no runtime, no cookies):
 
 ```json
 {
@@ -98,7 +98,7 @@ Header `Content-Disposition: attachment; filename="virtual-browser-YYYY-MM-DD.js
       "tags": ["demo"],
       "startUrl": "https://example.com/",
       "userDataDir": "/.../profiles/<id>/user-data",
-      "fingerprint": { "...": "effective fingerprint (geo đã áp)" },
+      "fingerprint": { "...": "effective fingerprint (geo already applied)" },
       "fingerprintSeed": "164684c1-...",
       "geo": { "...": "GeoInfo" },
       "runtime": {
@@ -117,13 +117,14 @@ Header `Content-Disposition: attachment; filename="virtual-browser-YYYY-MM-DD.js
 }
 ```
 
-Lưu ý: `fingerprint` trong response là **effective** (đã `applyGeo`), có thể khác
-`fingerprint` gốc trong file JSON. `fingerprintSeed` là seed gốc.
+Note: `fingerprint` in the response is the **effective** fingerprint (after `applyGeo`) and
+may differ from the original `fingerprint` in the JSON file. `fingerprintSeed` is the
+original seed.
 
 ### `GET /api/profiles/:id`
 
 ```json
-{ "profile": { /* như trên, không runtime */ }, "runtime": { /* RuntimeStatus */ } }
+{ "profile": { /* as above, no runtime */ }, "runtime": { /* RuntimeStatus */ } }
 ```
 
 ### `POST /api/profiles`
@@ -151,21 +152,21 @@ Body:
 }
 ```
 
-| Field | Bắt buộc | Ghi chú |
+| Field | Required | Notes |
 | --- | --- | --- |
-| `name` | ✅ | 1–80 ký tự |
-| `tags` | ❌ | ≤ 20 tag, mỗi tag ≤ 32 ký tự, tự dedupe |
-| `notes` | ❌ | ≤ 8000 ký tự, `null` để xoá |
-| `startUrl` | ❌ | mặc định `VB_START_URL`, phải là `http(s)://` hoặc `about:blank` |
+| `name` | ✅ | 1–80 characters |
+| `tags` | ❌ | ≤ 20 tags, each ≤ 32 characters, deduplicated automatically |
+| `notes` | ❌ | ≤ 8000 characters, `null` to clear |
+| `startUrl` | ❌ | defaults to `VB_START_URL`, must be `http(s)://` or `about:blank` |
 | `osProfile` | ❌ | `native` (default) / `windows` / `macos` |
-| `locale` | ❌ | BCP-47, ví dụ `en-US`; bỏ trống/`null` = tự suy từ geo |
-| `timezone` | ❌ | IANA, ví dụ `Asia/Tokyo`; bỏ trống/`null` = tự suy từ geo |
+| `locale` | ❌ | BCP-47, e.g. `en-US`; empty/`null` = inferred from geo |
+| `timezone` | ❌ | IANA, e.g. `Asia/Tokyo`; empty/`null` = inferred from geo |
 | `proxy` | ❌ | `null` = direct |
-| `vpn` | ❌ | `null` = không VPN; `configPath` phải tồn tại |
+| `vpn` | ❌ | `null` = no VPN; `configPath` must exist |
 
-- Gửi `locale`/`timezone` cụ thể sẽ **pin** giá trị đó (geo không ghi đè).
-- Proxy port 1–65535; host không kèm scheme.
-- `configPath` được resolve tuyệt đối (hỗ trợ `~/`).
+- Sending an explicit `locale`/`timezone` **pins** that value (geo does not override it).
+- Proxy port 1–65535; host without a scheme.
+- `configPath` is resolved to an absolute path (supports `~/`).
 
 Response `201`:
 
@@ -173,7 +174,7 @@ Response `201`:
 { "profile": { /* Profile */ } }
 ```
 
-Ví dụ:
+Example:
 
 ```bash
 curl -X POST http://127.0.0.1:8787/api/profiles \
@@ -183,17 +184,17 @@ curl -X POST http://127.0.0.1:8787/api/profiles \
 
 ### `PATCH /api/profiles/:id`
 
-Cùng schema, tất cả field optional. Điểm cần biết:
+Same schema, all fields optional. Key points:
 
-- `proxy: null` / `vpn: null` để xoá cấu hình.
-- `notes: null`, `tags: null` để xoá.
-- `locale: null` / `timezone: null` để **bỏ pin**, quay lại auto theo geo.
-- Đổi `osProfile` (hoặc locale/timezone) sẽ **regenerate fingerprint** với seed cũ.
-- Đổi proxy/VPN sẽ xoá `geo`, `geoError`, `lastCheck` (vì IP thoát đã đổi).
-- Thay đổi mạng/fingerprint chỉ áp dụng từ **lần launch kế tiếp**. Profile đang chạy không
-  tự restart.
-- Tắt VPN khi profile đang chạy sẽ stop wireproxy của profile đó; browser đang chạy vẫn
-  dùng tunnel cũ cho tới khi stop.
+- `proxy: null` / `vpn: null` clears the configuration.
+- `notes: null`, `tags: null` clears them.
+- `locale: null` / `timezone: null` **unpins** the value and returns to auto based on geo.
+- Changing `osProfile` (or locale/timezone) **regenerates the fingerprint** with the old seed.
+- Changing the proxy/VPN clears `geo`, `geoError`, and `lastCheck` (because the exit IP changed).
+- Network/fingerprint changes only apply from the **next launch**. A running profile does not
+  restart automatically.
+- Disabling the VPN while the profile is running stops that profile's wireproxy; the running
+  browser keeps using the old tunnel until it stops.
 
 Response:
 
@@ -203,7 +204,7 @@ Response:
 
 ### `DELETE /api/profiles/:id`
 
-Stop browser (nếu đang chạy), xoá entry và thư mục `data/profiles/<id>/`.
+Stops the browser (if running), deletes the entry and the `data/profiles/<id>/` directory.
 
 ```json
 { "ok": true, "id": "164684c1-..." }
@@ -211,7 +212,8 @@ Stop browser (nếu đang chạy), xoá entry và thư mục `data/profiles/<id>
 
 ### `POST /api/profiles/:id/duplicate`
 
-Tạo bản copy metadata với `id` mới, seed mới, **không copy** user-data/cookie:
+Creates a copy of the metadata with a new `id` and a new seed, **without copying**
+user-data/cookies:
 
 ```json
 { "profile": { "name": "Smoke test (copy)", "...": "..." } }
@@ -219,14 +221,14 @@ Tạo bản copy metadata với `id` mới, seed mới, **không copy** user-dat
 
 ### `POST /api/profiles/:id/fingerprint`
 
-Regenerate fingerprint (seed mới). Body optional:
+Regenerates the fingerprint (new seed). Optional body:
 
 ```json
 { "osProfile": "macos", "locale": "en-GB", "timezone": "Europe/London" }
 ```
 
-- Không gửi `locale`/`timezone` → kế thừa + giữ trạng thái pin hiện tại.
-- Gửi `null` → bỏ pin, dùng giá trị seeded/geo.
+- Omitting `locale`/`timezone` → inherit and keep the current pin state.
+- Sending `null` → unpin and use the seeded/geo value.
 
 ```json
 { "profile": { /* Profile */ } }
@@ -236,18 +238,20 @@ Regenerate fingerprint (seed mới). Body optional:
 
 ```json
 {
-  "stored": { /* fingerprint lưu trong profiles.json */ },
-  "effective": { /* sau applyGeo */ }
+  "stored": { /* fingerprint stored in profiles.json */ },
+  "effective": { /* after applyGeo */ }
 }
 ```
 
 ### `POST /api/profiles/:id/check`
 
-Tra IP/geo qua đúng proxy/VPN của profile, lưu `geo`, `lastCheck`, `geoError`.
+Looks up the IP/geo through the profile's own proxy/VPN, saving `geo`, `lastCheck`, and
+`geoError`.
 
-- Nếu có VPN và chưa chạy: tự start wireproxy, check xong tự stop (trừ khi profile đang
-  chạy).
-- Nếu `localePinned`/`timezonePinned` = true, fingerprint giữ nguyên phần tương ứng.
+- If a VPN is configured and not running: wireproxy starts automatically and stops once the
+  check finishes (unless the profile is running).
+- If `localePinned`/`timezonePinned` = true, the fingerprint keeps the corresponding part
+  unchanged.
 
 ```json
 {
@@ -269,22 +273,22 @@ Tra IP/geo qua đúng proxy/VPN của profile, lưu `geo`, `lastCheck`, `geoErro
       "latencyMs": 552
     }
   },
-  "profile": { /* Profile đã cập nhật */ }
+  "profile": { /* updated Profile */ }
 }
 ```
 
-Lỗi mạng vẫn trả `200` với `check.ok = false` và `check.error`; đây là kết quả kiểm tra,
-không phải lỗi request.
+Network errors still return `200` with `check.ok = false` and `check.error`; this is a check
+result, not a request error.
 
 ### `POST /api/proxy/check`
 
-Test proxy ad-hoc, **không lưu** gì (dùng cho form tạo/sửa):
+Tests a proxy ad hoc, **storing nothing** (used by the create/edit form):
 
 ```json
 { "proxy": { "type": "http", "host": "127.0.0.1", "port": 8080, "username": "u", "password": "p" } }
 ```
 
-`"proxy": null` để test direct.
+`"proxy": null` to test direct.
 
 ```json
 { "check": { "ok": true, "latencyMs": 312, "geo": { "...": "..." } } }
@@ -296,9 +300,10 @@ Test proxy ad-hoc, **không lưu** gì (dùng cho form tạo/sửa):
 
 ### `POST /api/profiles/:id/launch`
 
-Mở Chrome. Nếu profile đã `starting|running`, trả trạng thái hiện tại (không mở trùng).
+Opens Chrome. If the profile is already `starting|running`, returns the current status (no
+duplicate launch).
 
-Có thể mất 2–15 s: khởi động VPN + geo lookup + Chrome + trang đầu.
+Can take 2–15 s: VPN startup + geo lookup + Chrome + first page.
 
 ```json
 {
@@ -315,11 +320,11 @@ Có thể mất 2–15 s: khởi động VPN + geo lookup + Chrome + trang đầ
 }
 ```
 
-Lỗi cấu hình (Chrome missing, wireproxy missing, config sai) → 500 kèm message.
+Configuration errors (Chrome missing, wireproxy missing, bad config) → 500 with a message.
 
 ### `POST /api/profiles/:id/stop`
 
-Đóng browser, relay, VPN của profile.
+Closes the profile's browser, relay, and VPN.
 
 ```json
 { "status": { "profileId": "164684c1-...", "state": "stopped" } }
@@ -331,56 +336,56 @@ Lỗi cấu hình (Chrome missing, wireproxy missing, config sai) → 500 kèm m
 { "status": { /* RuntimeStatus */ } }
 ```
 
-Profile chưa chạy → `state: "stopped"`, không có `tabs`.
+Profile not running → `state: "stopped"`, no `tabs`.
 
 ### `GET /api/profiles/:id/thumbnail`
 
-- `200 image/jpeg` — frame mới nhất từ screencast (thường 420 px rộng), hoặc screenshot
+- `200 image/jpeg` — latest frame from the screencast (usually 420 px wide), or a screenshot
   fallback.
-- `204` — chưa có frame (chưa launch / vừa launch).
+- `204` — no frame yet (not launched / just launched).
 - `Cache-Control: no-store`.
 
-Dùng để poll mỗi 1–2 s. Không giữ kết nối.
+Use this to poll every 1–2 s. It does not keep the connection open.
 
 ### `POST /api/profiles/:id/navigate`
 
-Điều hướng tab active:
+Navigates the active tab:
 
 ```json
 { "url": "https://example.org" }
 ```
 
-- Thiếu scheme → tự thêm `https://`.
-- Chấp nhận `about:blank`.
-- `waitUntil: domcontentloaded`, timeout 30 s.
-- Trả `{ "status": RuntimeStatus }`.
+- Missing scheme → `https://` is added automatically.
+- Accepts `about:blank`.
+- `waitUntil: domcontentloaded`, 30 s timeout.
+- Returns `{ "status": RuntimeStatus }`.
 
 ### `POST /api/profiles/:id/tabs`
 
-Mở tab mới và chuyển sang tab đó:
+Opens a new tab and switches to it:
 
 ```json
 { "url": "https://example.org" }
 ```
 
-`url` optional (mặc định `about:blank`). Response như `navigate`.
+`url` is optional (defaults to `about:blank`). Response is the same as `navigate`.
 
 ### `POST /api/profiles/:id/tabs/:index/activate`
 
-Chuyển tab active (index lấy từ `status.tabs`).
+Switches the active tab (index from `status.tabs`).
 
 ### `DELETE /api/profiles/:id/tabs/:index`
 
-Đóng tab. Nếu đóng tab active, runtime tự chọn tab đầu còn lại.
+Closes the tab. If the active tab is closed, the runtime selects the first remaining tab.
 
 ---
 
-## 4. UI tĩnh
+## 4. Static UI
 
-| Route | Nội dung |
+| Route | Content |
 | --- | --- |
 | `GET /` | `public/index.html` dashboard |
 | `GET /styles.css` | CSS |
 | `GET /app.js` | JS |
 
-Không có client-side router; mọi thao tác qua `/api`.
+No client-side router; all operations go through `/api`.

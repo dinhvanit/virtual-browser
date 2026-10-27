@@ -1,46 +1,46 @@
-# Kiến trúc
+# Architecture
 
-Tài liệu này mô tả **cách hệ thống chạy**, không chỉ file nào làm gì. Đọc kèm
-[NETWORK](NETWORK.md) và [FINGERPRINT](FINGERPRINT.md).
-
----
-
-## 1. Mục tiêu thiết kế
-
-1. **Cô lập thật**: mỗi profile có Chrome `user-data-dir` riêng. Không dùng chung cookie,
-   cache, localStorage, extension.
-2. **Đường ra đúng**: mọi request của profile đi qua proxy/VPN đã cấu hình; IP dùng để tra
-   geo cũng phải đi qua đúng đường đó.
-3. **Nhất quán**: UA, client hints, platform, locale, timezone, screen, WebGL, hardware
-   không được mâu thuẫn nhau. Timezone/locale phải khớp IP thoát.
-4. **Quan sát được**: nhìn thấy browser đang chạy, tab, URL, ảnh live, lỗi mạng.
-5. **Local-first**: không cloud, không telemetry, dữ liệu nằm trong `data/`.
+This document describes **how the system runs**, not just which file does what. Read it
+alongside [NETWORK](NETWORK.md) and [FINGERPRINT](FINGERPRINT.md).
 
 ---
 
-## 2. Bản đồ module
+## 1. Design goals
 
-| File | Trách nhiệm |
+1. **Real isolation**: each profile has its own Chrome `user-data-dir`. No shared cookies,
+   cache, localStorage, or extensions.
+2. **Correct egress**: every request from a profile goes through the configured proxy/VPN;
+   the IP used for the geo lookup must also go through that same path.
+3. **Consistency**: UA, client hints, platform, locale, timezone, screen, WebGL, and hardware
+   must not contradict each other. Timezone/locale must match the exit IP.
+4. **Observability**: see the running browser, tabs, URL, live images, and network errors.
+5. **Local-first**: no cloud, no telemetry, data lives in `data/`.
+
+---
+
+## 2. Module map
+
+| File | Responsibility |
 | --- | --- |
-| `src/config.ts` | đường dẫn, dò Chrome/wireproxy, env, timeout, version |
-| `src/types.ts` | toàn bộ contract dữ liệu dùng chung |
-| `src/store.ts` | đọc/ghi `profiles.json` atomic, tạo/xoá user-data-dir an toàn |
-| `src/util/random.ts` | hash FNV-1a, PRNG mulberry32, seed picker, id |
-| `src/lib/fingerprint.ts` | sinh fingerprint từ seed, apply geo, init script, UA metadata |
-| `src/lib/geo-locale.ts` | map country → locale/timezone, canonical timezone, validate IANA |
+| `src/config.ts` | paths, Chrome/wireproxy detection, env, timeouts, version |
+| `src/types.ts` | all shared data contracts |
+| `src/store.ts` | atomic read/write of `profiles.json`, safe creation/removal of user-data-dir |
+| `src/util/random.ts` | FNV-1a hash, mulberry32 PRNG, seed picker, id |
+| `src/lib/fingerprint.ts` | generate fingerprint from seed, apply geo, init script, UA metadata |
+| `src/lib/geo-locale.ts` | country → locale/timezone mapping, canonical timezone, IANA validation |
 | `src/lib/socks5.ts` | SOCKS5 client handshake (no-auth + username/password) |
-| `src/lib/upstream.ts` | mở tunnel tới target qua direct/HTTP/HTTPS/SOCKS5; HTTP GET qua proxy |
-| `src/lib/relay.ts` | HTTP forward proxy local, chuyển tiếp CONNECT + absolute-form request |
-| `src/lib/geo.ts` | tra IP/geo qua đúng proxy, fallback 2 provider, `checkProxy` |
-| `src/lib/vpn.ts` | spawn/stop `wireproxy`, parse `[Socks5] BindAddress`, chờ port |
-| `src/runtime.ts` | session map, launch/stop, Playwright context, screencast, tab, navigate |
+| `src/lib/upstream.ts` | open a tunnel to the target via direct/HTTP/HTTPS/SOCKS5; HTTP GET through the proxy |
+| `src/lib/relay.ts` | local HTTP forward proxy, forwarding CONNECT + absolute-form requests |
+| `src/lib/geo.ts` | IP/geo lookup through the correct proxy, 2-provider fallback, `checkProxy` |
+| `src/lib/vpn.ts` | spawn/stop `wireproxy`, parse `[Socks5] BindAddress`, wait for the port |
+| `src/runtime.ts` | session map, launch/stop, Playwright context, screencast, tabs, navigate |
 | `src/server/index.ts` | Fastify, static UI, auth token, error handler, graceful shutdown |
-| `src/server/routes/*.ts` | REST endpoints theo nhóm |
-| `src/server/validate.ts` | validate input, `HttpError` |
-| `public/*` | dashboard vanilla JS (không build step) |
-| `scripts/verify-*.ts` | kiểm chứng fingerprint và proxy stack |
+| `src/server/routes/*.ts` | REST endpoints grouped by area |
+| `src/server/validate.ts` | input validation, `HttpError` |
+| `public/*` | vanilla JS dashboard (no build step) |
+| `scripts/verify-*.ts` | fingerprint and proxy stack verification |
 
-Luồng phụ thuộc (mũi tên = import):
+Dependency flow (arrow = import):
 
 ```text
 server ─► runtime ─► fingerprint ─► geo-locale
@@ -52,7 +52,7 @@ server ─► runtime ─► fingerprint ─► geo-locale
    └─► validate / routes
 ```
 
-Không có vòng import. `runtime.ts` chỉ import `store` (không ngược lại).
+There are no import cycles. `runtime.ts` imports only `store` (never the other way around).
 
 ---
 
@@ -62,9 +62,9 @@ Không có vòng import. `runtime.ts` chỉ import `store` (không ngược lạ
 
 ```jsonc
 {
-  "id": "164684c1-...",              // UUID, cũng là seed fingerprint ban đầu
+  "id": "164684c1-...",              // UUID, also the initial fingerprint seed
   "name": "Shopee seller — US",
-  "notes": "2FA ở điện thoại A",
+  "notes": "2FA on phone A",
   "tags": ["shopee", "us"],
   "createdAt": "2026-10-27T15:58:37.281Z",
   "updatedAt": "2026-10-27T15:58:44.010Z",
@@ -79,17 +79,18 @@ Không có vòng import. `runtime.ts` chỉ import `store` (không ngược lạ
     "label": "provider"
   },
   "vpn": { "kind": "wireguard", "configPath": "/home/me/us-ny.conf" },
-  "fingerprint": { "...": "xem dưới" },
-  "geo": { "...": "xem GeoInfo" },
+  "fingerprint": { "...": "see below" },
+  "geo": { "...": "see GeoInfo" },
   "geoError": "ipwho.is returned HTTP 502 | ...",
   "lastLaunchedAt": "2026-10-27T15:58:44.010Z",
   "lastCheck": { "ok": true, "checkedAt": "...", "latencyMs": 263, "geo": { } }
 }
 ```
 
-- `proxy` và `vpn` độc lập về dữ liệu, nhưng **VPN thắng** khi launch (xem §5).
-- `geo` là kết quả lần kiểm tra gần nhất; có thể cũ hơn IP hiện tại nếu proxy xoay IP.
-- `lastCheck` giữ cả trường hợp fail (`ok: false`, `error`).
+- `proxy` and `vpn` are independent in data, but the **VPN wins** at launch (see §5).
+- `geo` is the result of the most recent check; it may be older than the current IP if the
+  proxy rotates IPs.
+- `lastCheck` also keeps failures (`ok: false`, `error`).
 
 ### 3.2 `Fingerprint`
 
@@ -97,7 +98,7 @@ Không có vòng import. `runtime.ts` chỉ import `store` (không ngược lạ
 {
   "osProfile": "windows",            // native | windows | macos
   "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ... Chrome/150.0.7871.186 ...",
-  "chromeVersion": "150.0.7871.186", // lấy từ Chrome thật
+  "chromeVersion": "150.0.7871.186", // taken from the real Chrome
   "platform": "Win32",               // navigator.platform
   "locale": "th-TH",
   "timezone": "Asia/Bangkok",
@@ -109,49 +110,51 @@ Không có vòng import. `runtime.ts` chỉ import `store` (không ngược lạ
   "deviceMemory": 8,
   "colorScheme": "light",
   "seed": "164684c1-...",
-  "localePinned": false,             // true = không cho geo ghi đè locale
+  "localePinned": false,             // true = do not let geo override the locale
   "timezonePinned": false
 }
 ```
 
-`osProfile: "native"` nghĩa là **không giả OS**: UA/platform lấy theo host, không patch
-WebGL/hardware (tránh lộ hardware thật bị bịa sai). `windows`/`macos` patch toàn bộ.
+`osProfile: "native"` means **no OS spoofing**: UA/platform follow the host, and
+WebGL/hardware are not patched (avoiding a bogus fake of the real hardware).
+`windows`/`macos` patch everything.
 
 ### 3.3 `GeoInfo`
 
 `ip, country, countryCode, region, city, timezone, isp, org, checkedAt, provider,
-latencyMs`. Provider hiện tại: `ipwho.is`, fallback `ipapi.co`.
+latencyMs`. Current providers: `ipwho.is`, fallback `ipapi.co`.
 
-### 3.4 `RuntimeStatus` (không persist)
+### 3.4 `RuntimeStatus` (not persisted)
 
 `state: stopped | starting | running | error`, `startedAt`, `error`, `url`, `title`,
 `tabs[]`, `streaming`, `proxyServer`, `vpnActive`.
 
-Server restart → session map rỗng → mọi profile hiện `stopped` dù Chrome cũ có còn sống
-hay không. Đây là chủ ý: không có process supervisor.
+Server restart → empty session map → every profile shows `stopped`, whether or not the old
+Chrome is still alive. This is intentional: there is no process supervisor.
 
 ---
 
-## 4. Luồng tạo profile
+## 4. Profile creation flow
 
 ```text
 POST /api/profiles
   ├─ validate name/url/proxy/vpn/locale/timezone
   ├─ id = uuid
   ├─ fingerprint = generateFingerprint({ seed: id, osProfile, locale?, timezone? })
-  ├─ mark localePinned/timezonePinned nếu client gửi giá trị cụ thể
+  ├─ mark localePinned/timezonePinned if the client sends a concrete value
   ├─ userDataDir = data/profiles/<id>/user-data
-  └─ addProfile() → ghi JSON atomic
+  └─ addProfile() → write JSON atomically
 ```
 
-Chưa launch thì chưa tạo thư mục user-data (Playwright tự tạo). Chưa check IP thì `geo`
-rỗng; dashboard hiện “IP not checked yet”.
+Until the first launch, the user-data directory is not created (Playwright creates it).
+Until an IP check runs, `geo` is empty; the dashboard shows "IP not checked yet".
 
-Nhân bản profile: id mới, seed mới, copy proxy/VPN/tags/notes, **không** copy user-data.
+Duplicating a profile: new id, new seed, copy proxy/VPN/tags/notes, **do not** copy
+user-data.
 
 ---
 
-## 5. Luồng launch (quan trọng nhất)
+## 5. Launch flow (the most important one)
 
 ```mermaid
 sequenceDiagram
@@ -165,44 +168,45 @@ sequenceDiagram
     UI->>API: POST /profiles/:id/launch
     API->>RT: launchProfile(profile)
     RT->>RT: state = starting (session map)
-    alt có VPN
+    alt VPN configured
         RT->>NET: startVpn() → wireproxy
         NET-->>RT: SOCKS5 port 127.0.0.1:P
         Note over RT: browser proxy = socks5://127.0.0.1:P
-    else có proxy
+    else proxy configured
         RT->>NET: startRelay(proxy)
-        NET-->>RT: http://127.0.0.1:Q (không auth)
+        NET-->>RT: http://127.0.0.1:Q (no auth)
         Note over RT: browser proxy = relay URL
     else direct
-        Note over RT: không proxy
+        Note over RT: no proxy
     end
-    RT->>GEO: lookupGeo(đúng proxy của profile)
+    RT->>GEO: lookupGeo(profile's own proxy)
     GEO-->>RT: ip/country/timezone (+ latency)
     RT->>RT: profile.fingerprint = applyGeo(fp, geo)
     RT->>CH: launchPersistentContext(userDataDir, options)
     RT->>CH: addInitScript(fingerprintInitScript)
-    RT->>CH: CDP Emulation.setUserAgentOverride (từng page)
+    RT->>CH: CDP Emulation.setUserAgentOverride (per page)
     RT->>CH: goto(startUrl)
-    RT->>CH: Page.startScreencast + fallback screenshot
+    RT->>CH: Page.startScreencast + screenshot fallback
     RT->>RT: state = running, save lastLaunchedAt
     RT-->>API: RuntimeStatus
 ```
 
-### 5.1 Thứ tự ưu tiên mạng
+### 5.1 Network priority
 
-1. `profile.vpn` (WireGuard) — nếu có, dùng SOCKS5 local của wireproxy.
-2. `profile.proxy` — nếu có, dựng relay local.
+1. `profile.vpn` (WireGuard) — if present, use wireproxy's local SOCKS5.
+2. `profile.proxy` — if present, stand up a local relay.
 3. Direct.
 
-Proxy **không được chain** sau VPN. Muốn chain phải tự thay đổi thiết kế; hiện tại
-VPN là lớp mạng cuối.
+A proxy is **not chained** behind the VPN. Chaining would require changing the design;
+currently the VPN is the last network layer.
 
 ### 5.2 Geo refresh
 
-- Có proxy/VPN: **luôn** tra lại lúc launch (IP có thể đã xoay).
-- Direct: dùng lại `geo` nếu `checkedAt` < 24h, tránh chậm/không cần thiết.
-- Lỗi geo **không chặn launch**. `geoError` được lưu; browser vẫn mở với fingerprint cũ.
-- Nếu `localePinned`/`timezonePinned` = true, `applyGeo` giữ giá trị người dùng chọn.
+- With a proxy/VPN: **always** look up again at launch (the IP may have rotated).
+- Direct: reuse `geo` if `checkedAt` < 24h, avoiding unnecessary latency.
+- Geo errors **do not block launch**. `geoError` is stored; the browser still opens with the
+  old fingerprint.
+- If `localePinned`/`timezonePinned` = true, `applyGeo` keeps the user-selected value.
 
 ### 5.3 Playwright context options
 
@@ -210,7 +214,7 @@ VPN là lớp mạng cuối.
 executablePath: CHROME_PATH
 headless: HEADLESS
 args: [--no-first-run, --disable-blink-features=AutomationControlled,
-       --force-webrtc-ip-handling-policy=disable_non_proxied_udp (khi có proxy),
+       --force-webrtc-ip-handling-policy=disable_non_proxied_udp (when a proxy is configured),
        --lang=..., --window-size=...]
 ignoreDefaultArgs: ["--enable-automation"]
 userAgent, locale, timezoneId, viewport, screen, deviceScaleFactor, colorScheme
@@ -218,144 +222,149 @@ extraHTTPHeaders: { "Accept-Language": ... }
 proxy: { server: relayOrSocks }
 ```
 
-Chrome thật + `playwright-core` (không tải Chromium) để giữ codec, brand “Google Chrome”,
-TLS/JA3 thật.
+Real Chrome + `playwright-core` (no bundled Chromium) to keep codecs, the "Google Chrome"
+brand, and real TLS/JA3.
 
-### 5.4 Chống lộ WebRTC
+### 5.4 WebRTC leak prevention
 
-Khi có proxy/VPN, thêm
-`--force-webrtc-ip-handling-policy=disable_non_proxied_udp` để WebRTC không dùng UDP trực
-tiếp từ interface thật. Đây là biện pháp **giảm thiểu**, không phải chứng minh không leak
-tuyệt đối; xem [NETWORK §7](NETWORK.md#7-webrtc-và-dns-leak).
+When a proxy/VPN is configured, add
+`--force-webrtc-ip-handling-policy=disable_non_proxied_udp` so WebRTC does not use UDP
+directly from the real interface. This is a **mitigation**, not proof of zero leakage; see
+[NETWORK §6](NETWORK.md#6-webrtc).
 
 ---
 
-## 6. Relay local — vì sao cần?
+## 6. Local relay — why is it needed?
 
-Chrome nhận proxy qua `--proxy-server`/Playwright `proxy.server`. Chrome **không gửi**
-username/password từ URL kiểu `http://user:pass@host:port` một cách ổn định, nhất là
-SOCKS5. Vì vậy:
+Chrome receives the proxy via `--proxy-server`/Playwright `proxy.server`. Chrome does **not**
+reliably send the username/password from URLs like `http://user:pass@host:port`, especially
+for SOCKS5. Therefore:
 
 ```text
-Chrome ──► 127.0.0.1:Q (relay, không auth)
-              │  CONNECT host:port   (hoặc GET absolute-form)
+Chrome ──► 127.0.0.1:Q (relay, no auth)
+              │  CONNECT host:port   (or absolute-form GET)
               ▼
         connectUpstream(profile.proxy)
-              ├─ http/https: TCP/TLS tới proxy + CONNECT + Proxy-Authorization
+              ├─ http/https: TCP/TLS to the proxy + CONNECT + Proxy-Authorization
               └─ socks5: greeting → auth → CONNECT domain/IP
               ▼
         target
 ```
 
-Relay hỗ trợ:
+The relay supports:
 
-- `CONNECT host:port` — dùng cho HTTPS và (với Chrome) cả phần lớn request.
-- absolute-form `GET http://...` — viết lại thành origin-form trước khi đẩy vào tunnel.
-- loại bỏ `Proxy-Connection`, `Proxy-Authorization` khỏi request của Chrome.
-- giới hạn header 64 KB, timeout socket 120 s, đóng cả hai đầu khi một đầu chết.
+- `CONNECT host:port` — used for HTTPS and (with Chrome) most requests as well.
+- absolute-form `GET http://...` — rewritten to origin-form before being pushed into the tunnel.
+- stripping `Proxy-Connection` and `Proxy-Authorization` from Chrome's requests.
+- a 64 KB header limit, a 120 s socket timeout, and closing both ends when one dies.
 
-Relay bind `127.0.0.1` với port ngẫu nhiên. Không có auth vì chỉ phục vụ Chrome local;
-đóng khi profile stop.
+The relay binds `127.0.0.1` on a random port. There is no auth because it only serves the
+local Chrome; it closes when the profile stops.
 
-Chi tiết + test: [NETWORK](NETWORK.md).
+Details + tests: [NETWORK](NETWORK.md).
 
 ---
 
-## 7. Vòng đời session trong runtime
+## 7. Session lifecycle in the runtime
 
 ```text
 stopped ──launch──► starting ──ok──► running
                         │               │
-                        └──error──► error ──launch lại──► starting
+                        └──error──► error ──launch again──► starting
                                         │
-running ──context.close()/stop──► stopped (xoá session)
-error   ──dispose──► giữ entry lỗi để UI đọc; launch lần sau xoá
+running ──context.close()/stop──► stopped (session removed)
+error   ──dispose──► keep the error entry for the UI to read; the next launch removes it
 ```
 
-- `sessions: Map<profileId, Session>` trong RAM.
-- `Session` giữ `BrowserContext`, `RelayHandle`, `vpnActive`, `activePage`, CDP screencast,
-  frame JPEG gần nhất (base64), `cleaned`.
-- **Single-flight**: nếu đang `starting|running`, gọi launch trả status hiện tại.
-- `disposeSession()` idempotent: stop screencast → close context → close relay → stop VPN.
-  `context.on("close")` cũng gọi dispose (guard `cleaned`).
-- Khi tab active đóng, runtime chọn tab đầu còn lại và chuyển screencast.
-- Tab được đánh index theo `context.pages()`; index có thể đổi sau khi đóng tab — UI luôn
-  lấy lại danh sách sau mỗi action/poll.
+- `sessions: Map<profileId, Session>` in RAM.
+- `Session` holds `BrowserContext`, `RelayHandle`, `vpnActive`, `activePage`, the CDP
+  screencast, the latest JPEG frame (base64), and `cleaned`.
+- **Single-flight**: while `starting|running`, a launch call returns the current status.
+- `disposeSession()` is idempotent: stop screencast → close context → close relay → stop VPN.
+  `context.on("close")` also calls dispose (guarded by `cleaned`).
+- When the active tab closes, the runtime selects the first remaining tab and switches the
+  screencast.
+- Tabs are indexed by `context.pages()`; the index may change after a tab closes — the UI
+  always re-fetches the list after every action/poll.
 
 ### Screencast
 
-- CDP `Page.startScreencast` (JPEG q=45, maxWidth=420, everyNthFrame=4) cho tab active.
-- Mỗi frame lưu base64 + ack ngay để Chrome tiếp tục gửi.
-- Nếu chưa có frame trong 400 ms (tab tĩnh/headless không hỗ trợ), fallback
+- CDP `Page.startScreencast` (JPEG q=45, maxWidth=420, everyNthFrame=4) for the active tab.
+- Each frame is stored as base64 and acked immediately so Chrome keeps sending.
+- If no frame arrives within 400 ms (static tab/headless not supported), fall back to
   `page.screenshot(scale: "css")`.
-- `GET /api/profiles/:id/thumbnail` trả frame mới nhất, `204` nếu chưa có.
-- Khi đổi tab/stop, screencast cũ được stop + detach CDP.
+- `GET /api/profiles/:id/thumbnail` returns the latest frame, `204` if there is none.
+- On tab change/stop, the old screencast is stopped and CDP detached.
 
 ---
 
 ## 8. API & UI
 
 - Fastify 5, JSON, static `public/`.
-- Mọi route nằm dưới `/api`; UI gọi cùng origin nên không cần CORS.
-- Lỗi chuẩn hoá: `{ "error": "...", "statusCode": 400 }`.
-- `VB_TOKEN` (tuỳ chọn) → hook `onRequest` chặn `/api/*` nếu thiếu `x-vb-token`.
-- UI vanilla JS, không bundler: poll `/api/profiles` 3 s, thumbnail 1.8 s. Reconcile theo
-  `card._sig` để không rebuild DOM khi chỉ trạng thái runtime đổi (giữ focus URL bar).
-- Xem [API](API.md).
+- All routes live under `/api`; the UI calls the same origin, so no CORS is needed.
+- Normalized errors: `{ "error": "...", "statusCode": 400 }`.
+- `VB_TOKEN` (optional) → an `onRequest` hook blocks `/api/*` when `x-vb-token` is missing.
+- Vanilla JS UI, no bundler: polls `/api/profiles` every 3 s and the thumbnail every 1.8 s.
+  Reconciles by `card._sig` so the DOM is not rebuilt when only the runtime state changes
+  (keeping focus in the URL bar).
+- See [API](API.md).
 
 ---
 
-## 9. Lưu trữ & tính bền vững
+## 9. Storage & durability
 
-- JSON ghi qua file tạm rồi `rename` → tránh file hỏng giữa chừng.
-- Không có migration framework; `DB.version = 1`. Khi đổi schema phải:
-  1. Tăng version.
-  2. Viết hàm migrate trong `initStore()` (đọc → biến đổi → ghi lại).
-  3. Ghi vào [CHANGELOG](CHANGELOG.md) + [PROCESS](PROCESS.md).
-- `removeProfile()` chỉ xoá thư mục nếu đường dẫn resolve nằm trong `PROFILES_DIR`
-  (chống path traversal).
-- `profiles.json` chứa secret (proxy password). Không commit `data/` (đã có `.gitignore`).
+- JSON is written through a temp file and then `rename`d → avoids corrupting the file midway.
+- No migration framework; `DB.version = 1`. When the schema changes you must:
+  1. Bump the version.
+  2. Write a migrate function in `initStore()` (read → transform → write back).
+  3. Record it in [CHANGELOG](CHANGELOG.md) + [PROCESS](PROCESS.md).
+- `removeProfile()` only deletes the directory if the resolved path is inside `PROFILES_DIR`
+  (path traversal protection).
+- `profiles.json` contains secrets (proxy passwords). Do not commit `data/` (already covered
+  by `.gitignore`).
 
 ---
 
-## 10. Xử lý lỗi
+## 10. Error handling
 
-| Tình huống | Hành vi |
+| Situation | Behavior |
 | --- | --- |
-| Chrome không tồn tại | launch trả 500, message rõ; `/api/system` báo `found:false` |
-| Proxy sai auth | relay nhận 407 → Chrome hiện lỗi proxy; check IP trả lỗi 407 |
-| Proxy treo | timeout 15 s ở `connectUpstream`, 9 s geo; launch vẫn tiếp tục |
-| Geo lỗi | lưu `geoError`, launch tiếp tục |
-| VPN thiếu binary/config/port | launch fail trước khi mở Chrome; wireproxy bị kill |
-| Start URL lỗi | browser vẫn mở; `session.error` hiện trên card |
-| Tab crash/đóng | screencast chuyển tab khác; lỗi CDP bị nuốt |
-| Server SIGINT/SIGTERM | đóng Fastify → stop mọi session → stop VPN → exit |
+| Chrome not found | launch returns 500 with a clear message; `/api/system` reports `found:false` |
+| Wrong proxy auth | relay receives 407 → Chrome shows a proxy error; IP check returns a 407 error |
+| Proxy hangs | 15 s timeout in `connectUpstream`, 9 s for geo; launch continues |
+| Geo error | store `geoError`, launch continues |
+| VPN missing binary/config/port | launch fails before Chrome opens; wireproxy is killed |
+| Bad start URL | the browser still opens; `session.error` is shown on the card |
+| Tab crashes/closes | screencast switches to another tab; CDP errors are swallowed |
+| Server SIGINT/SIGTERM | close Fastify → stop all sessions → stop VPN → exit |
 
-Triết lý: **lỗi mạng/geo không được làm mất khả năng mở browser**, nhưng lỗi cấu hình
-(thiếu Chrome, thiếu wireproxy) phải fail sớm và rõ.
+Philosophy: **network/geo errors must not prevent the browser from opening**, but
+configuration errors (missing Chrome, missing wireproxy) must fail early and clearly.
 
 ---
 
-## 11. Quyết định thiết kế & đánh đổi
+## 11. Design decisions & trade-offs
 
-| Quyết định | Lý do | Đánh đổi |
+| Decision | Reason | Trade-off |
 | --- | --- | --- |
-| Chrome thật, không Chromium bundled | fingerprint thương mại, codec, TLS thật | phụ thuộc máy người dùng |
-| Relay local cho mọi proxy | auth hoạt động với Chrome | thêm 1 hop TCP local |
-| VPN ưu tiên hơn proxy | tránh double-hop khó hiểu | không chain được |
-| Screencast thay vì VNC | không cần thêm dependency/port | chỉ thấy tab active, ≤ 420 px |
-| JSON store | đơn giản, dễ backup | không phù hợp multi-process |
-| Session trong RAM | không cần DB runtime | restart server mất trạng thái |
-| Fingerprint sinh từ seed | tái lập được, không random mỗi launch | đổi fingerprint phải “regenerate” |
-| Geo tự động | locale/timezone khớp IP | launch chậm ~0.3–2 s; cần Internet |
+| Real Chrome, no bundled Chromium | commercial fingerprint, codecs, real TLS | depends on the user's machine |
+| Local relay for every proxy | auth works with Chrome | one extra local TCP hop |
+| VPN takes priority over proxy | avoids confusing double-hops | no chaining |
+| Screencast instead of VNC | no extra dependency/port | only the active tab, ≤ 420 px |
+| JSON store | simple, easy to back up | not suitable for multi-process |
+| Sessions in RAM | no runtime DB needed | server restart loses state |
+| Fingerprint generated from a seed | reproducible, not random per launch | changing the fingerprint requires "regenerate" |
+| Automatic geo | locale/timezone match the IP | launch is ~0.3–2 s slower; needs Internet |
 
 ---
 
-## 12. Điểm mở rộng
+## 12. Extension points
 
-- **Thêm proxy type** (SSH, Tor): thêm vào `ProxyType`, `connectUpstream`, validate, UI.
-- **Thêm VPN kind**: mở rộng `VpnConfig`, `vpn.ts`, nhánh `prepareNetwork`.
-- **Thêm fingerprint surface** (canvas/audio/fonts): thêm field vào `Fingerprint`, patch
-  trong `fingerprintInitScript`, thêm assert vào `scripts/verify-fingerprint.ts`.
-- **Thêm geo provider**: thêm hàm `lookupX`, đưa vào mảng fallback trong `lookupGeo`.
-- **Event realtime**: thay polling bằng SSE/WebSocket, phát sự kiện từ runtime.
+- **Add a proxy type** (SSH, Tor): add it to `ProxyType`, `connectUpstream`, validation, and
+  the UI.
+- **Add a VPN kind**: extend `VpnConfig`, `vpn.ts`, and the `prepareNetwork` branch.
+- **Add a fingerprint surface** (canvas/audio/fonts): add fields to `Fingerprint`, patch them
+  in `fingerprintInitScript`, and add assertions in `scripts/verify-fingerprint.ts`.
+- **Add a geo provider**: add a `lookupX` function and include it in the fallback array in
+  `lookupGeo`.
+- **Realtime events**: replace polling with SSE/WebSocket, emitting events from the runtime.

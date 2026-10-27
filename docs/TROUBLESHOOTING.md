@@ -1,136 +1,139 @@
 # Troubleshooting
 
-Mỗi mục: **triệu chứng → nguyên nhân → cách xử lý**. Chạy `npm run verify` trước để loại
-trừ lỗi môi trường.
+Each entry follows **symptom → cause → fix**. Run `npm run verify` first to rule out
+environment issues.
 
 ---
 
 ## 1. Server
 
-### `EADDRINUSE` khi start
+### `EADDRINUSE` on start
 
-Cổng 8787 đang bị chiếm.
+Port 8787 is already in use.
 
 ```bash
 ss -ltnp | grep 8787
-# hoặc đổi cổng
+# or change the port
 VB_PORT=8790 npm start
 ```
 
 ### `Cannot find module ... .js`
 
-Bạn đang chạy bằng Node thường thay vì `tsx`, hoặc build thiếu.
+You are running plain Node instead of `tsx`, or the build is incomplete.
 
 ```bash
-npm start          # dùng tsx
+npm start          # uses tsx
 npm run build && node dist/server/index.js
 ```
 
-Xem lại import nội bộ phải có đuôi `.js` (ESM + NodeNext).
+Also check that internal imports carry the `.js` extension (ESM + NodeNext).
 
-### UI trắng / 404 file tĩnh
+### Blank UI / 404 on static files
 
-- Chạy server từ **thư mục gốc repo** (config dùng `process.cwd()`).
-- Kiểm tra `public/index.html` tồn tại.
-- `curl -i http://127.0.0.1:8787/` phải trả `200 text/html`.
+- Run the server from the **repo root** (the config uses `process.cwd()`).
+- Verify that `public/index.html` exists.
+- `curl -i http://127.0.0.1:8787/` must return `200 text/html`.
 
-### Mọi API trả 401
+### Every API call returns 401
 
-`VB_TOKEN` đang bật.
+`VB_TOKEN` is enabled.
 
 ```bash
 curl -H 'x-vb-token: <token>' http://127.0.0.1:8787/api/health
-# hoặc mở UI một lần:
+# or open the UI once:
 # http://127.0.0.1:8787/?token=<token>
 ```
 
-Dashboard hiển thị toast hướng dẫn khi thiếu token hoặc token sai; token được lưu vào
-`localStorage` và tự bỏ khỏi URL sau lần mở đầu. Muốn kiểm tra tự động:
-`npm run verify:token` (server phải chạy với `VB_TOKEN`).
+The dashboard shows a guidance toast when the token is missing or wrong; the token is
+stored in `localStorage` and automatically removed from the URL after the first open. To
+check automatically: `npm run verify:token` (the server must be running with `VB_TOKEN`).
 
-### API ghi trả 403 `cross-origin request rejected`
+### Write API returns 403 `cross-origin request rejected`
 
-Bạn gọi từ JS của origin khác (ví dụ mở file HTML local, hoặc dev server khác cổng). UI
-phải được mở đúng `http://127.0.0.1:8787`. Curl không gửi `Origin` nên không bị chặn.
+You are calling from JS on a different origin (for example, opening a local HTML file, or a
+dev server on another port). The UI must be opened at exactly
+`http://127.0.0.1:8787`. Curl does not send `Origin`, so it is not blocked.
 
 ---
 
-## 2. Chrome không mở
+## 2. Chrome does not open
 
 ### `Chrome/Chromium not found`
 
 ```bash
 google-chrome --version
-# nếu chỉ có chromium:
+# if only chromium is available:
 CHROME_PATH=/usr/bin/chromium npm start
 ```
 
-`/api/system` cho biết path đang dùng. Trên macOS/Windows kiểm tra đường dẫn mặc định
-trong `src/config.ts`.
+`/api/system` shows the path in use. On macOS/Windows, check the default paths in
+`src/config.ts`.
 
-### Chrome crash ngay khi launch
+### Chrome crashes immediately on launch
 
-Chạy tay để xem lỗi:
+Run it manually to see the error:
 
 ```bash
 google-chrome --no-sandbox --user-data-dir=/tmp/chrome-test about:blank
 ```
 
-Thường gặp trên Linux server:
+Common on Linux servers:
 
-- thiếu thư viện (`libnss3`, `libatk`, `libgbm`): cài dependencies của Chrome.
-- chạy root/container: cần `--no-sandbox` (code đã thêm trên Linux).
-- thiếu `/dev/shm`: code đã thêm `--disable-dev-shm-usage`; nếu vẫn lỗi tăng shm.
+- missing libraries (`libnss3`, `libatk`, `libgbm`): install Chrome's dependencies.
+- running as root/in a container: requires `--no-sandbox` (the code already adds it on Linux).
+- missing `/dev/shm`: the code already adds `--disable-dev-shm-usage`; if it still fails, increase shm.
 
 ### `SingletonLock` / `profile appears to be in use`
 
-Một Chrome khác đang dùng cùng `user-data-dir` (server crash, launch trước chưa chết).
+Another Chrome instance is using the same `user-data-dir` (server crash, or a previous
+launch that has not exited).
 
 ```bash
 pgrep -af 'user-data-dir=.*data/profiles'
-# kill đúng process, sau đó:
+# kill the correct process, then:
 rm -f data/profiles/<id>/user-data/SingletonLock
 ```
 
-Chỉ xoá lock khi chắc chắn không còn Chrome chạy với profile đó.
+Only delete the lock when you are certain no Chrome instance is still running with that
+profile.
 
-### Không thấy cửa sổ Chrome
+### No Chrome window appears
 
-- `VB_HEADLESS=1` đang bật → chỉ có screencast, không có cửa sổ.
-- SSH không có X11 forwarding → dùng `VB_HEADLESS=1` hoặc thiết lập `DISPLAY`.
-- Wayland: thử `GDK_BACKEND=x11` nếu Chrome không hiện.
+- `VB_HEADLESS=1` is enabled → only the screencast is available, there is no window.
+- SSH without X11 forwarding → use `VB_HEADLESS=1` or set `DISPLAY`.
+- Wayland: try `GDK_BACKEND=x11` if Chrome does not appear.
 
 ---
 
 ## 3. Thumbnail / live view
 
-### `204 No Content` hoặc ô đen
+### `204 No Content` or a black tile
 
-- Profile chưa `running` → 204 là đúng.
-- Vừa launch, screencast chưa gửi frame → đợi 0.5–2 s.
-- Tab đang ở `chrome://` hoặc trang chặn screenshot → fallback screenshot có thể fail.
-- Headless cũ: screencast vẫn hoạt động; nếu không, `page.screenshot` fallback.
+- The profile is not `running` → 204 is correct.
+- Just launched, the screencast has not sent a frame yet → wait 0.5–2 s.
+- The tab is on `chrome://` or a page that blocks screenshots → the screenshot fallback may fail.
+- Old headless: the screencast still works; if it does not, use the `page.screenshot` fallback.
 
-### Ảnh đứng yên
+### The image is frozen
 
-`Page.startScreencast` chỉ gửi frame khi có thay đổi. Trang tĩnh sẽ đứng — bình thường.
-Điều hướng hoặc cuộn trong browser để cập nhật.
+`Page.startScreencast` only sends frames when something changes. Static pages stay
+frozen — that is normal. Navigate or scroll in the browser to update it.
 
-### Thumbnail to bất thường (2400 px)
+### Abnormally large thumbnail (2400 px)
 
-Đó là ảnh fallback `page.screenshot` ở DPR 1.25 trước khi frame screencast đầu tiên đến.
-Sau khi trang thay đổi, frame 420 px thay thế. Không ảnh hưởng chức năng.
+That is the `page.screenshot` fallback at DPR 1.25 before the first screencast frame
+arrives. Once the page changes, a 420 px frame replaces it. No functional impact.
 
 ---
 
 ## 4. Proxy
 
-### Chrome mở nhưng mọi trang báo lỗi proxy
+### Chrome opens but every page reports a proxy error
 
-1. Xem card / `GET /api/profiles/:id/session` có `state: error` không.
-2. `POST /api/profiles/:id/check` xem lỗi cụ thể.
-3. Chạy `npm run verify:proxy` để chắc code không hỏng.
-4. Kiểm tra upstream bằng curl:
+1. Check whether the card / `GET /api/profiles/:id/session` shows `state: error`.
+2. Run `POST /api/profiles/:id/check` to see the specific error.
+3. Run `npm run verify:proxy` to confirm the code is not broken.
+4. Test the upstream with curl:
 
 ```bash
 curl -x http://user:pass@host:port https://ipwho.is/
@@ -139,27 +142,28 @@ curl --socks5-hostname user:pass@host:port https://ipwho.is/
 
 ### `407`
 
-Sai username/password. Lưu ý password có ký tự đặc biệt vẫn được gửi nguyên (Basic base64),
-không cần URL-encode trong form UI.
+Wrong username/password. Note that passwords containing special characters are still sent
+as-is (Basic base64); no URL-encoding is needed in the UI form.
 
 ### `502 Upstream connection failed`
 
-Relay không kết nối được proxy: sai host/port, firewall, proxy chết, hoặc proxy `https` có
-certificate không hợp lệ. Kiểm tra bằng `openssl s_client -connect host:port`.
+The relay cannot reach the proxy: wrong host/port, firewall, proxy down, or an `https` proxy
+with an invalid certificate. Check with `openssl s_client -connect host:port`.
 
-### Proxy đúng nhưng IP vẫn là IP thật
+### Proxy is correct but the IP is still the real IP
 
-- Profile có VPN? VPN thắng proxy.
-- Đang xem IP từ trang cache? mở tab mới/refresh cứng.
-- Kiểm tra `proxyServer` trong `RuntimeStatus`: phải là `http://127.0.0.1:<port>` (relay)
-  hoặc `socks5://127.0.0.1:<vpnport>`.
-- Chrome extension/khác trong user-data cũ có thể override? Thử profile mới.
+- Does the profile use a VPN? The VPN takes precedence over the proxy.
+- Looking at a cached IP page? Open a new tab or hard-refresh.
+- Check `proxyServer` in `RuntimeStatus`: it must be `http://127.0.0.1:<port>` (relay) or
+  `socks5://127.0.0.1:<vpnport>`.
+- Could a Chrome extension or something else in an old user-data directory override it? Try
+  a new profile.
 
-### Geo ra sai nước
+### Geo resolves to the wrong country
 
-- Proxy exit thật ở nước đó (datacenter, geo provider ước lượng).
-- Provider fallback trả dữ liệu khác; xem `geo.provider`.
-- Pin locale/timezone nếu cần cố định; nhưng IP vẫn là tín hiệu mạnh nhất.
+- The proxy exit really is in that country (datacenter, geo provider estimate).
+- The fallback provider returned different data; check `geo.provider`.
+- Pin locale/timezone if you need consistency; however, the IP remains the strongest signal.
 
 ---
 
@@ -169,16 +173,16 @@ certificate không hợp lệ. Kiểm tra bằng `openssl s_client -connect host
 
 ```bash
 which wireproxy
-# hoặc
+# or
 VB_WIREPROXY=/path/to/wireproxy npm start
 ```
 
-Cài: tải release từ GitHub `pufferffish/wireproxy` (hoặc build Go), đặt vào `bin/` hoặc
-`/usr/local/bin`.
+Install: download a release from GitHub `pufferffish/wireproxy` (or build it with Go), place
+it in `bin/` or `/usr/local/bin`.
 
 ### `Could not find a [Socks5] BindAddress`
 
-Thêm vào cuối file `.conf`:
+Add this to the end of the `.conf` file:
 
 ```ini
 [Socks5]
@@ -187,104 +191,105 @@ BindAddress = 127.0.0.1:25344
 
 ### `wireproxy exited before opening its port`
 
-Xem log cuối trong message lỗi. Chạy tay:
+Check the last log lines in the error message. Run it manually:
 
 ```bash
 wireproxy -c /path/to.conf
 ```
 
-Thường do: private key sai, endpoint sai, `AllowedIPs` thiếu, interface không tạo được
-(container thiếu `NET_ADMIN`), hoặc port bận.
+Usually caused by: wrong private key, wrong endpoint, missing `AllowedIPs`, failure to
+create the interface (container missing `NET_ADMIN`), or a busy port.
 
-### WireGuard chạy nhưng không có mạng
+### WireGuard runs but there is no network
 
-- `AllowedIPs = 0.0.0.0/0` để route toàn bộ.
-- `DNS = 1.1.1.1` trong `[Interface]`.
-- Peer chưa handshake: kiểm tra `Endpoint`, UDP 51820, firewall.
-- Container: cần quyền tạo TUN (`--cap-add=NET_ADMIN --device /dev/net/tun`).
+- `AllowedIPs = 0.0.0.0/0` to route all traffic.
+- `DNS = 1.1.1.1` in `[Interface]`.
+- The peer has not handshaked: check `Endpoint`, UDP 51820, firewall.
+- Container: needs permission to create a TUN device (`--cap-add=NET_ADMIN --device /dev/net/tun`).
 
-### Port VPN trùng giữa các profile
+### VPN port collides between profiles
 
-Mỗi profile dùng một file config/port riêng. Nếu dùng chung config, chạy đồng thời sẽ lỗi
-`EADDRINUSE`. Sửa `BindAddress` khác nhau cho từng profile.
+Each profile uses its own config file/port. Sharing a config causes `EADDRINUSE` when
+running concurrently. Set a different `BindAddress` for each profile.
 
 ---
 
-## 6. Dữ liệu & trạng thái
+## 6. Data & state
 
-### Mất profile sau restart
+### Profiles disappear after a restart
 
-- Kiểm tra `VB_DATA_DIR` có bị đổi không (dev dùng `/tmp/...`).
-- Kiểm tra `data/profiles.json` còn tồn tại và parse được:
+- Check whether `VB_DATA_DIR` changed (dev uses `/tmp/...`).
+- Check that `data/profiles.json` still exists and parses:
 
 ```bash
 python3 -m json.tool data/profiles.json > /dev/null && echo ok
 ```
 
-- Nếu file hỏng, khôi phục từ backup (`tar`), không tự tạo lại rỗng.
+- If the file is corrupt, restore from backup (`tar`); do not recreate it empty.
 
-### Profile hiện `stopped` dù Chrome còn chạy
+### Profile shows `stopped` even though Chrome is still running
 
-Session chỉ nằm RAM. Restart server làm mất trạng thái. Stop Chrome thủ công rồi launch
-lại, hoặc kill process còn sót (xem SingletonLock).
+Sessions live only in RAM. Restarting the server loses the state. Stop Chrome manually and
+launch again, or kill the leftover process (see SingletonLock).
 
-### Xoá profile nhưng thư mục còn
+### Profile deleted but the directory remains
 
-`removeProfile` chỉ xoá bên trong `PROFILES_DIR` và bỏ qua lỗi quyền. Kiểm tra quyền
-`data/profiles`; xoá tay nếu cần:
+`removeProfile` only deletes inside `PROFILES_DIR` and ignores permission errors. Check the
+permissions on `data/profiles`; delete manually if needed:
 
 ```bash
 rm -rf data/profiles/<id>
 ```
 
-### `profiles.json` bị ghi đè rỗng
+### `profiles.json` overwritten with an empty file
 
-Chỉ xảy ra nếu nhiều process cùng ghi. Chỉ chạy **một** server trên một `VB_DATA_DIR`.
-Khôi phục backup.
+This only happens when multiple processes write at the same time. Run only **one** server
+per `VB_DATA_DIR`. Restore from backup.
 
 ---
 
 ## 7. UI
 
-### Nút Launch quay mãi
+### Launch button spins forever
 
-Launch có thể mất 2–15 s (VPN + geo + Chrome). Nếu > 30 s:
+Launch can take 2–15 s (VPN + geo + Chrome). If it takes > 30 s:
 
-- xem log server (`VB_LOG_LEVEL=debug`);
-- kiểm tra Chrome còn tiến trình;
-- kiểm tra proxy timeout 15 s + geo 9 s;
-- gọi `curl -X POST .../launch` để xem message lỗi.
+- check the server logs (`VB_LOG_LEVEL=debug`);
+- check that Chrome is still running;
+- check the proxy timeout of 15 s + geo 9 s;
+- call `curl -X POST .../launch` to see the error message.
 
-### URL bar mất focus khi đang gõ
+### URL bar loses focus while typing
 
-UI tạm dừng cập nhật panel runtime khi focus nằm trong panel. Nếu vẫn bị, refresh trang và
-báo bug kèm bước tái hiện.
+The UI pauses runtime panel updates while focus is inside the panel. If it still happens,
+refresh the page and report a bug with reproduction steps.
 
-### Tab index sai sau khi đóng tab
+### Tab index is wrong after closing a tab
 
-Index là vị trí hiện tại, không phải ID cố định. UI luôn refresh sau thao tác; nếu gọi API
-tay, đọc lại `status.tabs` trước khi activate/close.
+The index is the current position, not a fixed ID. The UI always refreshes after an action;
+if calling the API manually, re-read `status.tabs` before activate/close.
 
-### Toast “Failed to fetch”
+### Toast "Failed to fetch"
 
-Server chết hoặc đổi port. Kiểm tra tab Network; mở `http://127.0.0.1:8787/api/health`.
+The server is down or the port changed. Check the Network tab; open
+`http://127.0.0.1:8787/api/health`.
 
 ---
 
-## 8. Hiệu năng
+## 8. Performance
 
-### Nhiều profile chạy → RAM cao
+### Many profiles running → high RAM
 
-Mỗi Chrome thật tốn 300–800 MB. Đây là bản chất, không phải leak. Giới hạn số profile chạy
-đồng thời; stop profile không dùng.
+Each real Chrome instance uses 300–800 MB. This is inherent, not a leak. Limit the number of
+concurrently running profiles; stop profiles you are not using.
 
-### Dashboard chậm
+### Dashboard is slow
 
-- Poll 3 s + thumbnail 1.8 s cho mỗi profile chạy. 10 profile = 10 ảnh/1.8 s.
-- Giảm bằng cách stop bớt hoặc sửa interval trong `public/app.js`.
-- Screencast đã giới hạn 420 px, q=45.
+- Polling every 3 s + thumbnails every 1.8 s per running profile. 10 profiles = 10 images/1.8 s.
+- Reduce it by stopping some profiles or changing the interval in `public/app.js`.
+- Screencast is already capped at 420 px, q=45.
 
-### Server log quá nhiều
+### Too many server logs
 
 ```bash
 VB_LOG_LEVEL=warn npm start
@@ -292,15 +297,15 @@ VB_LOG_LEVEL=warn npm start
 
 ---
 
-## 9. Thu thập thông tin khi báo lỗi
+## 9. Collecting information when reporting a bug
 
 ```bash
 node -v
 npm ls --depth=0
 google-chrome --version
 curl -s http://127.0.0.1:8787/api/system
-VB_LOG_LEVEL=debug npm start   # lấy log quanh thời điểm lỗi
+VB_LOG_LEVEL=debug npm start   # capture logs around the time of the error
 ```
 
-Không gửi kèm: cookie, `profiles.json` đầy đủ, mật khẩu proxy, private key, ảnh thumbnail
-nhạy cảm.
+Do not include: cookies, the full `profiles.json`, proxy passwords, private keys, or
+sensitive thumbnail images.

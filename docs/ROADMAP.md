@@ -1,153 +1,153 @@
 # Roadmap
 
-Đánh dấu `[x]` khi đã merge + verify + docs. Không đưa việc chưa có tiêu chí nghiệm thu
-vào đây.
+Mark `[x]` once the item is merged + verified + documented. Do not add work without
+acceptance criteria here.
 
 ---
 
-## v0.1 — Nền tảng (đã xong)
+## v0.1 — Foundation (done)
 
-- [x] Profile store JSON atomic
-- [x] Types/config/dò Chrome
-- [x] Fingerprint generator cơ bản
+- [x] Atomic JSON profile store
+- [x] Types/config/Chrome detection
+- [x] Basic fingerprint generator
 - [x] Playwright persistent context
-- [x] Dashboard tối giản
+- [x] Minimal dashboard
 
-## v0.2 — Antidetect khả dụng (đã xong)
+## v0.2 — Usable antidetect (done)
 
-### Mạng
-- [x] HTTP/HTTPS/SOCKS5 proxy có auth
-- [x] Relay local (CONNECT + absolute-form)
+### Network
+- [x] HTTP/HTTPS/SOCKS5 proxies with auth
+- [x] Local relay (CONNECT + absolute-form)
 - [x] SOCKS5 client (RFC 1928 + 1929)
-- [x] Timeout toàn bộ handshake + destroy socket
-- [x] WireGuard qua wireproxy (spawn, parse port, stop, log)
-- [x] Geo lookup qua đúng proxy/VPN, fallback 2 provider
-- [x] `force-webrtc-ip-handling-policy` khi proxied
-- [x] `npm run verify:proxy` (HTTP auth, SOCKS5 auth, relay, sai mật khẩu)
+- [x] Timeout on every handshake + socket destroy
+- [x] WireGuard through wireproxy (spawn, parse port, stop, log)
+- [x] Geo lookup through the correct proxy/VPN, 2-provider fallback
+- [x] `force-webrtc-ip-handling-policy` when proxied
+- [x] `npm run verify:proxy` (HTTP auth, SOCKS5 auth, relay, wrong password)
 
 ### Fingerprint
-- [x] Seed PRNG, UI/version theo Chrome thật
-- [x] UA + client hints qua CDP + init script
+- [x] Seeded PRNG, UI/version taken from the real Chrome
+- [x] UA + client hints via CDP + init script
 - [x] platform/locale/timezone/screen/DPR/WebGL/hardware/plugins/webdriver
 - [x] OS profile native/windows/macos
-- [x] Geo → locale/timezone canonical, pin locale/timezone
-- [x] `npm run verify:fingerprint` (15 assert)
+- [x] Geo → canonical locale/timezone, pin locale/timezone
+- [x] `npm run verify:fingerprint` (15 assertions)
 
 ### Runtime / UI
-- [x] Launch/stop single-flight, cleanup idempotent
+- [x] Single-flight launch/stop, idempotent cleanup
 - [x] Live screencast JPEG + fallback screenshot
-- [x] Tab list/mở/đóng/chuyển, URL bar
+- [x] Tab list/open/close/switch, URL bar
 - [x] Dashboard: search/filter, tags, geo, fingerprint facts, toast, modal
-- [x] Check IP theo profile + test proxy ad-hoc
+- [x] Per-profile IP check + ad-hoc proxy test
 - [x] Duplicate, regenerate fingerprint, delete
 - [x] Export JSON
 - [x] CSRF same-origin guard, security headers, optional `VB_TOKEN`
 
-### Vận hành
-- [x] Graceful shutdown đóng Chrome/relay/VPN
+### Operations
+- [x] Graceful shutdown closes Chrome/relay/VPN
 - [x] API reference, architecture, process, security, troubleshooting docs
 - [x] Devlog + changelog
 - [x] `npm run verify:ui` (create/search/edit/duplicate/delete) + `npm run ui:shot`
 
 ---
 
-## v0.3 — Khôi phục & dữ liệu (ưu tiên cao)
+## v0.3 — Restore & data (high priority)
 
 ### Import / backup / restore
-- [ ] `POST /api/import` nhận file export, tạo profile mới (không ghi đè id cũ).
-- [ ] `GET /api/export?full=1` tuỳ chọn đóng gói cả user-data (`.tar.gz`) — có cảnh báo
-      bảo mật rõ.
-- [ ] Backup/restore qua UI, có xác nhận.
-- [ ] **Nghiệm thu**: export 3 profile → xoá → import → metadata/proxy/fingerprint khớp;
-      user-data chỉ khôi phục khi chọn full.
+- [ ] `POST /api/import` accepts an export file and creates new profiles (does not overwrite existing ids).
+- [ ] Optional `GET /api/export?full=1` bundles user-data too (`.tar.gz`) — with a clear security
+      warning.
+- [ ] Backup/restore from the UI, with confirmation.
+- [ ] **Acceptance**: export 3 profiles → delete → import → metadata/proxy/fingerprint match;
+      user-data is restored only when full is selected.
 
 ### Profile organization
-- [ ] Group/folder (một cấp), gán qua kéo thả hoặc dropdown.
-- [ ] Sort theo tên/lần chạy/trạng thái.
-- [ ] Bulk actions: launch/stop/delete nhiều profile (có xác nhận).
-- [ ] **Nghiệm thu**: 20 profile thao tác bulk không block UI quá 2 s (dùng optimistic +
-      poll).
+- [ ] Groups/folders (one level), assigned by drag-and-drop or dropdown.
+- [ ] Sort by name/last run/status.
+- [ ] Bulk actions: launch/stop/delete multiple profiles (with confirmation).
+- [ ] **Acceptance**: a bulk action on 20 profiles does not block the UI for more than 2 s
+      (optimistic updates + polling).
 
-### Dữ liệu fingerprint
-- [ ] Lưu `localePinned/timezonePinned` hiển thị rõ trên card (badge “pinned”).
-- [ ] Preset fingerprint (Windows 11 + RTX, MacBook M2…) để chọn nhanh.
-- [ ] Lưu lịch sử fingerprint (mỗi lần regenerate) để audit.
-- [ ] **Nghiệm thu**: đổi preset không làm mất proxy/notes; lịch sử chỉ đọc.
+### Fingerprint data
+- [ ] Show saved `localePinned/timezonePinned` clearly on the card ("pinned" badge).
+- [ ] Fingerprint presets (Windows 11 + RTX, MacBook M2…) for quick selection.
+- [ ] Keep fingerprint history (on each regenerate) for auditing.
+- [ ] **Acceptance**: changing a preset does not lose proxy/notes; history is read-only.
 
 ---
 
-## v0.4 — Fingerprint sâu hơn
+## v0.4 — Deeper fingerprint
 
-- [ ] Canvas noise deterministic theo seed (2D + WebGL readPixels).
-- [ ] AudioContext fingerprint (buffer noise nhẹ, không phá audio).
-- [ ] Font list theo OS profile (giả `document.fonts.check` + measurement).
-- [ ] Geolocation API theo geo (toạ độ + permission “prompt” giả lập).
-- [ ] Media devices count/labels ổn định.
+- [ ] Seed-deterministic canvas noise (2D + WebGL readPixels).
+- [ ] AudioContext fingerprint (light buffer noise, without breaking audio).
+- [ ] Font list per OS profile (spoof `document.fonts.check` + measurement).
+- [ ] Geolocation API driven by geo (coordinates + simulated "prompt" permission).
+- [ ] Stable media device count/labels.
 - [ ] `navigator.connection`, battery, bluetooth/USB policy.
-- [ ] WebRTC test tự động (không chỉ flag).
-- [ ] **Nghiệm thu**: `verify:fingerprint` mở rộng ≥ 25 assert; 3 seed cho canvas hash
-      khác nhau, cùng seed hash ổn định; không làm hỏng Google Maps/YouTube.
+- [ ] Automated WebRTC test (not just a flag).
+- [ ] **Acceptance**: `verify:fingerprint` grows to ≥ 25 assertions; 3 seeds produce different
+      canvas hashes, the same seed produces a stable hash; Google Maps/YouTube keep working.
 
 ---
 
-## v0.5 — Vận hành quy mô nhỏ
+## v0.5 — Small-scale operations
 
-- [ ] SSE/WebSocket đẩy trạng thái + frame thay polling (giảm request).
-- [ ] Proxy pool + rotation thủ công (mỗi profile một proxy, có health check).
-- [ ] Health check định kỳ (opt-in), cảnh báo proxy chết.
-- [ ] Import cookie/session từ file JSON (Netscape hoặc Playwright storage state) —
-      có cảnh báo rủi ro.
-- [ ] Mở extension unpacked theo profile.
+- [ ] SSE/WebSocket pushing state + frames instead of polling (fewer requests).
+- [ ] Proxy pool + manual rotation (one proxy per profile, with health checks).
+- [ ] Periodic health checks (opt-in), alert on dead proxies.
+- [ ] Import cookies/sessions from a JSON file (Netscape or Playwright storage state) —
+      with a risk warning.
+- [ ] Load unpacked extensions per profile.
 - [ ] Custom Chrome args per profile (whitelist).
-- [ ] **Nghiệm thu**: 10 profile chạy, dashboard cập nhật < 1 s, CPU server < 5% khi idle.
+- [ ] **Acceptance**: 10 running profiles, dashboard updates < 1 s, server CPU < 5% when idle.
 
 ---
 
-## v0.6 — Đóng gói & chất lượng
+## v0.6 — Packaging & quality
 
-- [ ] Test tự động cho store/validate/fingerprint (node:test hoặc vitest).
-- [ ] Test API bằng `fastify.inject()`.
-- [ ] CI (GitHub Actions): typecheck + verify:proxy + unit test (không cần Chrome cho PR).
+- [ ] Automated tests for store/validate/fingerprint (node:test or vitest).
+- [ ] API tests with `fastify.inject()`.
+- [ ] CI (GitHub Actions): typecheck + verify:proxy + unit tests (no Chrome needed for PRs).
 - [ ] Docker image (Chrome + wireproxy + app), mount `data/`.
-- [ ] `npm pack`/binary packaging (pkg/bun) — quyết định sau khi đo kích thước.
-- [x] `verify:ui` cơ bản bằng Playwright (CRUD + console errors) — launch/stop đã có
-      smoke API; mở rộng UI test cho launch khi có proxy ổn định.
-- [ ] **Nghiệm thu**: PR đỏ nếu typecheck/test fail; image chạy được với `VB_HEADLESS=1`.
+- [ ] `npm pack`/binary packaging (pkg/bun) — decide after measuring size.
+- [x] Basic `verify:ui` with Playwright (CRUD + console errors) — launch/stop already have API
+      smoke coverage; extend the UI test to launch once a stable proxy is available.
+- [ ] **Acceptance**: the PR fails if typecheck/tests fail; the image runs with `VB_HEADLESS=1`.
 
 ---
 
-## v1.0 — Ổn định
+## v1.0 — Stability
 
-- [ ] Schema migration framework (`db.version` > 1) + test migrate.
-- [ ] Audit log thao tác (tạo/xoá/launch/check) có timestamp, không chứa secret.
-- [ ] Backup định kỳ có mã hoá (age/gpg).
-- [ ] Tài liệu “vận hành an toàn” hoàn chỉnh + threat model review.
-- [ ] API versioning (`/api/v1`) hoặc cam kết backward-compatible.
-- [ ] **Nghiệm thu**: nâng cấp từ v0.2 không mất profile/cookie; rollback được.
+- [ ] Schema migration framework (`db.version` > 1) + migration tests.
+- [ ] Operation audit log (create/delete/launch/check) with timestamps, no secrets.
+- [ ] Encrypted periodic backups (age/gpg).
+- [ ] Complete "safe operations" documentation + threat model review.
+- [ ] API versioning (`/api/v1`) or a backward-compatibility commitment.
+- [ ] **Acceptance**: upgrading from v0.2 loses no profiles/cookies; rollback works.
 
 ---
 
 ## Technical debt / known gaps
 
-| Vấn đề | Tác động | Đề xuất |
+| Issue | Impact | Proposal |
 | --- | --- | --- |
-| Session chỉ trong RAM | restart mất trạng thái, Chrome mồ côi | process registry/supervisor (v0.6) |
-| Polling 3 s | nhiều request khi nhiều profile | SSE (v0.5) |
-| `plugins` là object giả | detectable bởi script nâng cao | tạo `PluginArray` giả hoàn chỉnh (v0.4) |
-| Client hints popup đầu tiên | lệch header | patch sớm hơn qua CDP auto-attach |
-| macOS preset dùng UA Intel | không đa dạng | thêm preset Apple Silicon |
-| Không có import | khôi phục thủ công | v0.3 |
-| Không có test unit | refactor rủi ro | v0.6 |
-| `--no-sandbox` trên Linux | giảm cô lập process | chỉ dùng khi container; cân nhắc flag opt-in |
-| Password proxy plain text | lộ nếu lộ file | mã hoá store bằng passphrase (v1.0) |
-| Không giới hạn số profile chạy | cạn RAM | cảnh báo + limit cấu hình (v0.5) |
+| Sessions live only in RAM | restart loses state, orphaned Chrome | process registry/supervisor (v0.6) |
+| 3 s polling | many requests with many profiles | SSE (v0.5) |
+| `plugins` is a fake object | detectable by advanced scripts | build a complete fake `PluginArray` (v0.4) |
+| Client hints on the first popup | header mismatch | patch earlier via CDP auto-attach |
+| macOS preset uses an Intel UA | not diverse | add an Apple Silicon preset |
+| No import | manual restore | v0.3 |
+| No unit tests | risky refactoring | v0.6 |
+| `--no-sandbox` on Linux | reduces process isolation | use only in containers; consider an opt-in flag |
+| Proxy passwords in plain text | exposed if the file leaks | encrypt the store with a passphrase (v1.0) |
+| No limit on running profiles | RAM exhaustion | warning + configurable limit (v0.5) |
 
 ---
 
-## Nguyên tắc ưu tiên
+## Prioritization principles
 
-1. **Không mất dữ liệu người dùng** trước mọi tính năng mới.
-2. **Đúng mạng** (không leak IP) trước **fingerprint đẹp**.
-3. **Nhất quán** trước **nhiều surface**.
-4. **Đo được** trước **tối ưu**: thêm verify/assert trước khi tối ưu cảm tính.
-5. **Local-first**: không thêm cloud dependency nếu không thật cần.
+1. **Never lose user data** before any new feature.
+2. **Correct networking** (no IP leaks) before **pretty fingerprints**.
+3. **Consistency** before **more surfaces**.
+4. **Measurable** before **optimization**: add verify/assert before optimizing on gut feeling.
+5. **Local-first**: do not add cloud dependencies unless truly necessary.

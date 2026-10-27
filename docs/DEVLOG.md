@@ -1,51 +1,116 @@
 # Devlog
 
-Ghi lại **công việc thực tế**: làm gì, vì sao, kiểm chứng ra sao, còn gì treo. Mỗi entry
-theo ngày; entry mới thêm lên đầu. Không thay thế CHANGELOG (dành cho người dùng).
+Records **actual work**: what was done, why, how it was verified, what is still open. Each
+entry is organized by date; new entries go at the top. Not a replacement for the CHANGELOG
+(which is for users).
 
 ---
 
-## 2026-10-27 — Hardening cuối vòng 0.2.0 (lifecycle tab, VPN, token UI)
+## 2026-10-28 — English localization for international distribution
 
-### Bối cảnh
+### Context
 
-Sau khi v0.2.0 chạy được end-to-end, rà lại các đường biên ít được chạm trong demo:
-tab mở đồng thời, wireproxy chết/không spawn được, thoát server, và dashboard khi
-token sai. Mục tiêu là không để lại promise treo, listener trùng hay process mồ côi.
+The project is being positioned for an international audience (QA, automation, and
+self-hosted privacy users). All user-facing documentation and UI strings were Vietnamese;
+the code, API, and identifiers were already English. This entry covers the localization
+pass only — no runtime behavior changed.
 
-### Vấn đề & cách sửa
+### What was done
 
-1. **`attachPage()` có thể chạy hai lần cho cùng một tab.**
-   `openTab()` gọi trực tiếp, đồng thời `context.on("page")` cũng bắt sự kiện mở tab,
-   nên một page bị gắn 2 listener `close` và 2 CDP session.
-   → Thêm `WeakMap<Page, Promise<void>>` (`pageAttachments`): lần gọi sau dùng lại promise
-   đã có; listener `close` chỉ đăng ký một lần. Nếu override thất bại bất thường thì xoá
-   cache để lần sau thử lại.
+- Rewrote `README.md` in English with a marketing-oriented structure: positioning, target
+  users, feature table, comparison with cloud browser services, quick start, workflow,
+  configuration, data/security, architecture, API, verification, limitations, acceptable
+  use, contributing, license.
+- Translated every document under `docs/` to English:
+  `API.md`, `ARCHITECTURE.md`, `CHANGELOG.md`, `DEVLOG.md`, `FINGERPRINT.md`, `NETWORK.md`,
+  `PROCESS.md`, `ROADMAP.md`, `SECURITY.md`, `TROUBLESHOOTING.md`.
+- Translated the two remaining Vietnamese UI strings in `public/app.js` (missing/invalid
+  token toasts) and updated `scripts/verify-token-ui.ts` to assert the English message.
+- Added a root `SECURITY.md` with supported versions, private vulnerability reporting,
+  scope, response expectations, deployment checklist, and safe harbor. Linked it from
+  `docs/SECURITY.md`.
+- Kept `LICENSE` unchanged: the official AGPL-3.0 text is already English and must remain
+  verbatim.
 
-2. **`shutdownAll()` không chờ VPN dừng.**
-   `stopAllVpn()` là fire-and-forget nên process có thể thoát khi wireproxy còn sống.
-   → `stopAllVpn()` chuyển sang `async`, dùng `Promise.all(stopVpn)`; `shutdownAll()`
-   `await stopAllVpn()`.
+### Verification
 
-3. **Spawn wireproxy lỗi → crash server.**
-   `spawn()` phát sự kiện `error` (ENOENT/EACCES) bất đồng bộ; không có listener thì Node
-   ném unhandled `error`. Đồng thời `exitCode` vẫn `null` nên `waitForPort()` chỉ timeout
-   chứ không báo đúng nguyên nhân.
-   → Thêm `child.once("error")` lưu lỗi; `waitForPort()` nhận callback `spawnError` và ném
-   ngay khi có lỗi; message cuối gộp `failed to start wireproxy: ...` + log cuối.
+```text
+$ grep -rlP "[\x{00C0}-\x{1EF9}]" --exclude-dir=node_modules --exclude-dir=data --exclude-dir=.git --exclude=LICENSE .
+(no Markdown/source matches; only the binary screenshot and × glyphs)
 
-4. **Script verify treo sau khi in OK.**
-   `verify-proxy.ts` để socket tunnel half-open, `server.close()` chờ mãi nên `npm run
-   verify:proxy` không bao giờ thoát (rất dễ hiểu nhầm là treo mạng).
-   → `close()` có timeout 500 ms (`timer.unref()`), và thoát tường minh `process.exit(0)`
-   sau khi in OK.
+$ markdown relative-link + anchor check
+all relative links OK
 
-5. **Dashboard báo lỗi 401 khó hiểu.**
-   Trước đây chỉ hiện "Unauthorized" từ server.
-   → `api()` trong `public/app.js` dịch 401 thành hướng dẫn: chưa có token thì mở
-   `/?token=<VB_TOKEN>`; token sai thì nói token không hợp lệ và yêu cầu mở lại.
+$ npx tsc -p tsconfig.json --noEmit
+typecheck OK
 
-### Kiểm chứng
+$ npm run verify:token   (server with VB_TOKEN=secret-token)
+no token  : The server requires a token. Open the dashboard with /?token=<VB_TOKEN> ...
+bad token : Invalid token or token changed. Reopen the dashboard with /?token=<VB_TOKEN>.
+good token: http://127.0.0.1:8812/ | error toasts: []
+OK: token UI messages verified.
+```
+
+### Notes
+
+- Internal links and anchors were checked after translation; `ARCHITECTURE.md` now points to
+  `NETWORK.md#6-webrtc`.
+- The Vietnamese version remains available in git history at commit `9f3e9a7`.
+- `docs/dashboard.png` was captured from a clean demo data directory; no real profile data
+  is included.
+
+### Next up
+
+1. Add a `README.vi.md` only if a Vietnamese audience needs a maintained translation.
+2. Add GitHub Actions for typecheck + `verify:proxy`.
+3. Publish the `v0.2.0` release with the English assets.
+
+---
+
+## 2026-10-27 — Final 0.2.0 hardening (tab lifecycle, VPN, token UI)
+
+### Context
+
+After v0.2.0 ran end-to-end, reviewed the edge paths that were rarely touched in the demo:
+tabs opened concurrently, wireproxy dying or failing to spawn, server exit, and the dashboard
+with a wrong token. The goal was to leave no hanging promises, duplicate listeners, or orphan
+processes behind.
+
+### Issues & fixes
+
+1. **`attachPage()` could run twice for the same tab.**
+   `openTab()` called it directly, while `context.on("page")` also caught the tab-open event,
+   so a single page got 2 `close` listeners and 2 CDP sessions.
+   → Added a `WeakMap<Page, Promise<void>>` (`pageAttachments`): subsequent calls reuse the
+   existing promise; the `close` listener is registered only once. If an override fails
+   unexpectedly, the cache is cleared so the next attempt can retry.
+
+2. **`shutdownAll()` did not wait for the VPN to stop.**
+   `stopAllVpn()` was fire-and-forget, so the process could exit while wireproxy was still
+   alive.
+   → `stopAllVpn()` became `async`, using `Promise.all(stopVpn)`; `shutdownAll()`
+   `await`s `stopAllVpn()`.
+
+3. **wireproxy spawn failure → server crash.**
+   `spawn()` emits `error` (ENOENT/EACCES) asynchronously; without a listener Node throws an
+   unhandled `error`. At the same time `exitCode` stays `null`, so `waitForPort()` only timed
+   out without reporting the real cause.
+   → Added `child.once("error")` to store the error; `waitForPort()` takes a `spawnError`
+   callback and throws as soon as an error appears; the final message combines
+   `failed to start wireproxy: ...` + the tail log.
+
+4. **Verify script hung after printing OK.**
+   `verify-proxy.ts` left the tunnel socket half-open, `server.close()` waited forever, so
+   `npm run verify:proxy` never exited (easily mistaken for a network hang).
+   → `close()` has a 500 ms timeout (`timer.unref()`), and an explicit `process.exit(0)`
+   after printing OK.
+
+5. **Dashboard 401 error was hard to understand.**
+   Previously it only showed "Unauthorized" from the server.
+   → `api()` in `public/app.js` turns 401 into guidance: no token yet, open
+   `/?token=<VB_TOKEN>`; wrong token, say the token is invalid and ask to reopen.
+
+### Verification
 
 ```text
 $ npx tsc -p tsconfig.json --noEmit
@@ -58,7 +123,7 @@ $ npx tsx scripts/verify-proxy.ts
   ok  local relay (plain HTTP absolute-form)
   ok  HTTP proxy wrong password: rejected (proxy: CONNECT rejected with HTTP 407)
   ok  SOCKS5 wrong password: rejected (socks5: authentication failed)
-OK: proxy stack verified.        (exit 0, không còn treo)
+OK: proxy stack verified.        (exit 0, no longer hangs)
 
 $ npx tsx scripts/verify-fingerprint.ts
 OK: every checked value matches the generated fingerprint.
@@ -79,94 +144,94 @@ stop: stopped
 OK: runtime smoke verified.
 
 $ npx tsx scripts/verify-token-ui.ts   (server VB_TOKEN=secret-token)
-no token  : Máy chủ yêu cầu token. Mở dashboard bằng /?token=<VB_TOKEN> ...
-bad token : Token không hợp lệ hoặc đã thay đổi. Mở lại dashboard bằng /?token=<VB_TOKEN>.
+no token  : Server requires a token. Open the dashboard with /?token=<VB_TOKEN> ...
+bad token : Invalid token or the token has changed. Reopen the dashboard with /?token=<VB_TOKEN>.
 good token: http://127.0.0.1:8812/ | error toasts: []
 OK: token UI messages verified.
 ```
 
-### Ghi chú vận hành
+### Operational notes
 
-- `verify:token` cần server chạy với `VB_TOKEN`; script mặc định gọi cổng `8812`
-  (đổi trong `scripts/verify-token-ui.ts` nếu cần).
-- `verify:proxy` giờ thoát ngay sau khi in OK — dùng được trong CI tuần tự.
-- Tab dedup là theo từng `Page`; không ảnh hưởng tab mở sau khi profile đã chạy.
+- `verify:token` needs a server running with `VB_TOKEN`; the script defaults to port `8812`
+  (change it in `scripts/verify-token-ui.ts` if needed).
+- `verify:proxy` now exits right after printing OK — usable in sequential CI.
+- Tab dedup is per `Page`; it does not affect tabs opened after the profile is already running.
 
 ---
 
-## 2026-10-27 — v0.2.0: từ skeleton → antidetect browser dùng được
+## 2026-10-27 — v0.2.0: from skeleton → usable antidetect browser
 
-### Bối cảnh
+### Context
 
-Repo khởi đầu chỉ có `types.ts`, `store.ts`, `config.ts`, `package.json`, `tsconfig`.
-`package.json` khai báo Fastify + Playwright nhưng chưa có server, runtime, relay, UI hay
-tài liệu. Mục tiêu phiên này: hoàn thiện một vòng chạy end-to-end có thể kiểm chứng.
+The repo started with only `types.ts`, `store.ts`, `config.ts`, `package.json`, `tsconfig`.
+`package.json` declared Fastify + Playwright but there was no server, runtime, relay, UI, or
+documentation. Goal for this session: complete one verifiable end-to-end cycle.
 
-### Đã làm
+### What was done
 
-#### 1. Nền tảng
+#### 1. Foundation
 
-- Hoàn thiện `config.ts`: dò Chrome (Linux/macOS/Windows), wireproxy, env
-  (`VB_DATA_DIR`, `VB_HEADLESS`, timeout geo/VPN), version `0.2.0`.
-- Mở rộng `types.ts`: `ProxyCheckResult`, `TabInfo`, `RuntimeStatus` có tabs/streaming,
-  fingerprint có `platform`, `seed`, `localePinned`, `timezonePinned`.
-- `store.ts`: thêm `userDataDirFor()`, giữ ghi atomic và guard path traversal.
-- `util/random.ts`: FNV-1a + mulberry32 + picker để fingerprint deterministic.
+- Completed `config.ts`: Chrome detection (Linux/macOS/Windows), wireproxy, env
+  (`VB_DATA_DIR`, `VB_HEADLESS`, geo/VPN timeouts), version `0.2.0`.
+- Extended `types.ts`: `ProxyCheckResult`, `TabInfo`, `RuntimeStatus` with tabs/streaming,
+  fingerprint with `platform`, `seed`, `localePinned`, `timezonePinned`.
+- `store.ts`: added `userDataDirFor()`, kept atomic writes and the path traversal guard.
+- `util/random.ts`: FNV-1a + mulberry32 + picker for deterministic fingerprints.
 
 #### 2. Fingerprint
 
 - `lib/fingerprint.ts`:
-  - dò version Chrome thật (`--version`) để UA/client hints khớp;
-  - preset screen/GPU/locale/OS;
-  - `applyGeo()` đồng bộ locale/timezone theo IP, tôn trọng pin;
-  - init script patch navigator (webdriver, platform, hardware, languages, UA, vendor,
+  - detect the real Chrome version (`--version`) so UA/client hints match;
+  - screen/GPU/locale/OS presets;
+  - `applyGeo()` syncs locale/timezone to the IP, respecting pins;
+  - init script patches navigator (webdriver, platform, hardware, languages, UA, vendor,
     `userAgentData`, plugins, `window.chrome`) + WebGL vendor/renderer;
-  - `userAgentMetadata()` cho CDP `Emulation.setUserAgentOverride`.
-- `lib/geo-locale.ts`: bảng country→locale/timezone, validate IANA, canonical hoá ICU,
+  - `userAgentMetadata()` for CDP `Emulation.setUserAgentOverride`.
+- `lib/geo-locale.ts`: country→locale/timezone table, IANA validation, ICU canonicalization,
   `languageList`.
 
-#### 3. Mạng
+#### 3. Network
 
-- `lib/socks5.ts`: client SOCKS5 no-auth + RFC1929, domain/IPv4/IPv6, đọc byte chính xác,
-  map lỗi.
-- `lib/upstream.ts`: direct/HTTP/HTTPS/SOCKS5 tunnel, Basic auth cho HTTP CONNECT, HTTP GET
-  qua tunnel, decode chunked, timeout toàn bộ giai đoạn.
-- `lib/relay.ts`: forward proxy local, xử lý **cả** CONNECT và absolute-form, rewrite
-  header, giới hạn header/idle, dọn socket.
-- `lib/geo.ts`: ipwho.is → ipapi.co fallback, deadline tổng.
-- `lib/vpn.ts`: parse `[Socks5] BindAddress`, spawn wireproxy, chờ port, log ring 100 dòng,
-  SIGTERM→SIGKILL.
+- `lib/socks5.ts`: no-auth + RFC1929 SOCKS5 client, domain/IPv4/IPv6, exact byte reads,
+  error mapping.
+- `lib/upstream.ts`: direct/HTTP/HTTPS/SOCKS5 tunnel, Basic auth for HTTP CONNECT, HTTP GET
+  through the tunnel, chunked decoding, timeouts for the whole stage.
+- `lib/relay.ts`: local forward proxy handling **both** CONNECT and absolute-form, header
+  rewriting, header/idle limits, socket cleanup.
+- `lib/geo.ts`: ipwho.is → ipapi.co fallback, overall deadline.
+- `lib/vpn.ts`: parse `[Socks5] BindAddress`, spawn wireproxy, wait for port, 100-line ring
+  log, SIGTERM→SIGKILL.
 
 #### 4. Runtime
 
 - `runtime.ts`: session map, single-flight launch, prepareNetwork (VPN > proxy > direct),
-  geo refresh (skip 24h nếu direct), Playwright context options, CDP UA override từng page,
-  screencast + fallback, tab API, navigate, cleanup idempotent, `shutdownAll`.
-- Thêm `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` khi proxied.
+  geo refresh (skip 24h when direct), Playwright context options, per-page CDP UA override,
+  screencast + fallback, tab API, navigate, idempotent cleanup, `shutdownAll`.
+- Added `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` when proxied.
 
 #### 5. API + UI
 
-- Fastify 5, static UI, error handler chuẩn hoá, graceful SIGINT/SIGTERM.
+- Fastify 5, static UI, normalized error handler, graceful SIGINT/SIGTERM.
 - Routes: system/health/export; profile CRUD/duplicate/fingerprint/check/proxy-check;
   runtime launch/stop/session/thumbnail/tabs/navigate.
-- Validate chặt bằng tay (`HttpError`, proxy, UUID, BCP-47, IANA, URL, tags).
-- UI vanilla JS: grid card, live thumbnail (blob poll), search/filter, modal tạo/sửa, test
-  proxy, check IP, duplicate, regenerate, delete confirm, tabs/URL bar, toast, system
+- Strict hand-written validation (`HttpError`, proxy, UUID, BCP-47, IANA, URL, tags).
+- Vanilla JS UI: grid cards, live thumbnail (blob poll), search/filter, create/edit modal, test
+  proxy, check IP, duplicate, regenerate, delete confirmation, tabs/URL bar, toast, system
   banner.
-- Token API optional + CSRF guard same-origin + security headers.
+- Optional API token + same-origin CSRF guard + security headers.
 
-#### 6. Kiểm chứng & tài liệu
+#### 6. Verification & documentation
 
-- `scripts/verify-fingerprint.ts`: 15 assert giữa generated ↔ page thật.
-- `scripts/verify-proxy.ts`: dựng HTTP CONNECT proxy có auth + SOCKS5 proxy có auth; kiểm
-  tra client, relay CONNECT, relay absolute-form, sai mật khẩu.
-- `scripts/verify-ui.ts`: Playwright headless chạy luồng create → search → edit →
-  duplicate → delete trên dashboard, bắt console/page errors.
-- `scripts/screenshot-ui.ts`: chụp dashboard để review giao diện.
+- `scripts/verify-fingerprint.ts`: 15 assertions between generated ↔ real page.
+- `scripts/verify-proxy.ts`: spins up an auth HTTP CONNECT proxy + an auth SOCKS5 proxy; checks
+  the client, relay CONNECT, relay absolute-form, wrong password.
+- `scripts/verify-ui.ts`: headless Playwright runs the create → search → edit →
+  duplicate → delete flow on the dashboard, catching console/page errors.
+- `scripts/screenshot-ui.ts`: captures the dashboard for UI review.
 - Docs: README, ARCHITECTURE, PROCESS, API, FINGERPRINT, NETWORK, SECURITY, TROUBLESHOOTING,
   ROADMAP, DEVLOG, CHANGELOG.
 
-### Kết quả kiểm chứng
+### Verification results
 
 ```text
 $ npm run typecheck
@@ -184,10 +249,10 @@ $ npm run verify:proxy
   ok  SOCKS5 wrong password: rejected (authentication failed)
 OK: proxy stack verified.
 
-$ smoke API (VB_HEADLESS=1, data dir tạm)
+$ smoke API (VB_HEADLESS=1, temp data dir)
 launch → running, "Example Domain", thumbnail JPEG
 navigate → https://httpbin.org/user-agent
-open tab → 2 tabs đúng active
+open tab → 2 tabs, correct active
 stop → stopped
 
 $ npm run verify:ui http://127.0.0.1:8799
@@ -200,57 +265,58 @@ $ npm run verify:ui http://127.0.0.1:8799
 OK: UI flow verified.
 
 $ UI screenshot review
-2 cards, states ["Running","Stopped"], không có console error.
+2 cards, states ["Running","Stopped"], no console errors.
 ```
 
-### Vấn đề phát hiện trong lúc làm & cách sửa
+### Issues found during the work & fixes
 
-1. **Timezone lệch giữa metadata và page**: Chrome trả tên ICU canonical
-   (`Asia/Saigon`) trong khi fingerprint lưu `Asia/Ho_Chi_Minh`.
-   → Thêm `canonicalTimezone()` và dùng trong `generateFingerprint` + `applyGeo`.
-   Verify fingerprint bắt được mismatch này.
+1. **Timezone mismatch between metadata and page**: Chrome returned the canonical ICU name
+   (`Asia/Saigon`) while the fingerprint stored `Asia/Ho_Chi_Minh`.
+   → Added `canonicalTimezone()` and used it in `generateFingerprint` + `applyGeo`.
+   The fingerprint verification caught this mismatch.
 
-2. **Ảnh thumbnail đầu tiên quá lớn**: `Promise.all([startScreencast, captureStill])` làm
-   screenshot (2400 px) ghi đè frame screencast (420 px) đến sau.
-   → Thêm `startView()`: start screencast, chờ tối đa 400 ms, chỉ fallback screenshot nếu
-   chưa có frame. Đổi `scale: "css"` cho fallback.
+2. **The first thumbnail was too large**: `Promise.all([startScreencast, captureStill])` let
+   the screenshot (2400 px) overwrite the screencast frame (420 px) that arrived later.
+   → Added `startView()`: start the screencast, wait up to 400 ms, fall back to a screenshot
+   only if no frame arrived. Switched the fallback to `scale: "css"`.
 
-3. **Pin locale bị geo ghi đè**: `applyGeo` luôn thay locale/timezone.
-   → Thêm `localePinned`/`timezonePinned`; UI chỉ gửi locale/timezone khi người dùng thực
-     sự nhập (hoặc xoá để bỏ pin).
+3. **Locale pinning was overwritten by geo**: `applyGeo` always replaced locale/timezone.
+   → Added `localePinned`/`timezonePinned`; the UI only sends locale/timezone when the user
+     actually enters them (or clears them to drop the pin).
 
-4. **Nguy cơ CSRF từ website độc hại**: POST form tới localhost có thể launch/stop.
-   → Hook `onRequest` chặn request ghi khác origin qua `Origin`/`Sec-Fetch-Site`.
-   Bổ sung kiểm tra `Host` khi bind loopback để chặn DNS rebinding.
+4. **CSRF risk from a malicious website**: a POST form to localhost could launch/stop.
+   → An `onRequest` hook blocks write requests from other origins via `Origin`/`Sec-Fetch-Site`.
+   Added a `Host` check when binding to loopback to block DNS rebinding.
 
-5. **Timeout treo**: TLS handshake sau CONNECT và CONNECT response chưa có timer.
-   → Thêm `withTimeout` + destroy socket; SOCKS5 có timeout listener.
+5. **Hung timeouts**: the TLS handshake after CONNECT and the CONNECT response had no timer.
+   → Added `withTimeout` + socket destroy; SOCKS5 has a timeout listener.
 
-6. **Relay plain HTTP**: nếu chỉ xử lý CONNECT, Chrome request `http://` sẽ fail.
-   → Parse absolute-form, rewrite origin-form, giữ body, test trong verify-proxy.
+6. **Relay plain HTTP**: handling only CONNECT made Chrome's `http://` requests fail.
+   → Parse absolute-form, rewrite to origin-form, keep the body, test it in verify-proxy.
 
-### Quyết định
+### Decisions
 
-- VPN **thắng** proxy; không chain.
-- Geo lỗi không chặn launch.
-- Session không persist; restart = stopped.
-- Fingerprint deterministic theo seed; regenerate = seed mới.
-- macOS preset dùng UA Intel để đồng bộ với WebGL Metal/ANGLE hiện có.
+- VPN **wins** over proxy; no chaining.
+- A geo failure does not block launch.
+- Sessions do not persist; restart = stopped.
+- Fingerprint is deterministic per seed; regenerate = new seed.
+- The macOS preset uses an Intel UA to stay consistent with the existing WebGL Metal/ANGLE.
 
-### Còn treo / biết trước
+### Still open / known
 
-- Canvas/audio/fonts/geolocation/media devices chưa spoof.
-- `navigator.plugins` là object giả, chưa phải `PluginArray` hoàn chỉnh.
-- Popup do site mở có thể lệch client hints ở request đầu.
-- Chưa có import/backup UI, chưa có test unit/CI.
-- Chưa test với wireproxy thật trong môi trường này (không có binary/peer); phần parse
-  config + lifecycle đã code, cần test tay khi có VPN.
-- `--no-sandbox` tự thêm trên Linux; cân nhắc opt-in cho môi trường desktop thật.
+- Canvas/audio/fonts/geolocation/media devices are not spoofed yet.
+- `navigator.plugins` is a fake object, not a complete `PluginArray`.
+- Popups opened by a site may have mismatched client hints on the first request.
+- No import/backup UI, no unit tests/CI yet.
+- Not tested with a real wireproxy in this environment (no binary/peer); config parsing +
+  lifecycle are coded, but manual testing is needed when a VPN is available.
+- `--no-sandbox` is added automatically on Linux; consider making it opt-in for real desktop
+  environments.
 
-### Việc tiếp theo
+### Next up
 
 1. `POST /api/import` + backup UI (v0.3).
-2. SSE thay polling.
-3. Canvas/audio noise deterministic.
-4. Test với một proxy HTTP auth thật + một WireGuard peer thật.
-5. Unit test cho `validate.ts`, `store.ts`, `applyGeo`.
+2. SSE instead of polling.
+3. Deterministic canvas/audio noise.
+4. Test with a real HTTP auth proxy + a real WireGuard peer.
+5. Unit tests for `validate.ts`, `store.ts`, `applyGeo`.

@@ -1,70 +1,71 @@
 # Fingerprint
 
-Mục tiêu không phải “giả nhiều thứ nhất”, mà là **không mâu thuẫn**. Một profile có ít
-surface nhưng nhất quán thường an toàn hơn một profile spoof 20 thứ nhưng UA nói Windows,
-WebGL nói Apple M2, timezone nói Berlin và IP ở Bangkok.
+The goal is not "spoofing the most things", but **not being contradictory**. A profile with
+fewer surfaces but consistent is usually safer than a profile that spoofs 20 things but
+whose UA says Windows, WebGL says Apple M2, timezone says Berlin, and IP is in Bangkok.
 
 ---
 
-## 1. Nguyên tắc nhất quán
+## 1. Consistency principles
 
-| Cặp giá trị | Quy tắc |
+| Value pair | Rule |
 | --- | --- |
-| `userAgent` ↔ `userAgentData` ↔ Chrome binary | cùng một `chromeVersion` lấy từ Chrome thật |
+| `userAgent` ↔ `userAgentData` ↔ Chrome binary | same `chromeVersion` obtained from the real Chrome |
 | `navigator.platform` ↔ UA ↔ WebGL driver | Windows ↔ Win32 ↔ ANGLE D3D11; macOS ↔ MacIntel ↔ ANGLE Metal |
-| `navigator.language/languages` ↔ `Accept-Language` ↔ context locale | cùng `locale` |
-| `Intl` timezone ↔ geo IP | cùng quốc gia (trừ khi người dùng pin) |
-| `screen` ↔ `window-size` ↔ viewport ↔ DPR | cùng một bộ trong `Fingerprint` |
-| `hardwareConcurrency` ↔ `deviceMemory` | giá trị desktop hợp lý (8–16) |
+| `navigator.language/languages` ↔ `Accept-Language` ↔ context locale | same `locale` |
+| `Intl` timezone ↔ geo IP | same country (unless the user pins it) |
+| `screen` ↔ `window-size` ↔ viewport ↔ DPR | same set in `Fingerprint` |
+| `hardwareConcurrency` ↔ `deviceMemory` | plausible desktop values (8–16) |
 | `navigator.webdriver` ↔ launch args | `false` + `--disable-blink-features=AutomationControlled` |
-| WebGL vendor ↔ renderer | cùng cặp GPU trong preset |
-| Client hints header ↔ JS `userAgentData` | CDP `Emulation.setUserAgentOverride` + init script |
-| WebRTC ↔ proxy | `disable_non_proxied_udp` khi có proxy |
+| WebGL vendor ↔ renderer | same GPU pair in the preset |
+| Client hints headers ↔ JS `userAgentData` | CDP `Emulation.setUserAgentOverride` + init script |
+| WebRTC ↔ proxy | `disable_non_proxied_udp` when a proxy is present |
 
-`generateFingerprint()` dùng **một seed duy nhất** cho mọi lựa chọn, nên các field không
-thể “lệch pha” do random độc lập.
+`generateFingerprint()` uses **a single seed** for all choices, so fields cannot "drift out
+of phase" due to independent randomness.
 
 ---
 
-## 2. Seed & sinh fingerprint
+## 2. Seed & fingerprint generation
 
 ```text
-seed = profile.id (lúc tạo)
+seed = profile.id (at creation)
         │
         ▼
 FNV-1a hash → mulberry32 PRNG
         │
-        ├─ chọn locale/timezone preset (nếu chưa pin)
-        ├─ chọn screen + deviceScaleFactor
-        ├─ chọn WebGL vendor/renderer (chỉ windows/macos)
-        ├─ chọn hardwareConcurrency ∈ {8,12,16}
-        ├─ chọn deviceMemory ∈ {8,16}
-        └─ chọn colorScheme (15% dark)
+        ├─ pick locale/timezone preset (if not pinned)
+        ├─ pick screen + deviceScaleFactor
+        ├─ pick WebGL vendor/renderer (windows/macos only)
+        ├─ pick hardwareConcurrency ∈ {8,12,16}
+        ├─ pick deviceMemory ∈ {8,16}
+        └─ pick colorScheme (15% dark)
 ```
 
-- Cùng seed → cùng fingerprint (tái lập được, dễ debug).
-- “Regenerate fingerprint” tạo seed mới (`newId()`), nên toàn bộ lựa chọn đổi.
-- Đổi `osProfile` regenerate với seed cũ + suffix OS; giữ được “cá tính” ổn định.
+- Same seed → same fingerprint (reproducible, easy to debug).
+- "Regenerate fingerprint" creates a new seed (`newId()`), so all choices change.
+- Changing `osProfile` regenerates with the old seed + an OS suffix; the stable "personality"
+  is preserved.
 
 ### Chrome version
 
-`chromeVersion()` chạy `google-chrome --version` một lần/process và cache. UA dùng version
-đầy đủ; client hints dùng major + full version. Nếu không dò được, dùng
-`VB_CHROME_VERSION` hoặc fallback `150.0.0.0`.
+`chromeVersion()` runs `google-chrome --version` once per process and caches it. The UA uses
+the full version; client hints use the major + full version. If detection fails, it uses
+`VB_CHROME_VERSION` or falls back to `150.0.0.0`.
 
-> Sau khi update Chrome, **restart server** để version mới được dò lại.
+> After updating Chrome, **restart the server** so the new version is detected again.
 
 ### OS profile
 
-| `osProfile` | Hành vi |
+| `osProfile` | Behavior |
 | --- | --- |
-| `native` | UA/platform theo host; **không** patch WebGL/hardware; locale/timezone lấy hệ thống nếu chưa có geo |
-| `windows` | UA Windows NT 10.0; `Win32`; patch WebGL ANGLE D3D11, hardware, client hints platform Windows |
-| `macos` | UA Macintosh Intel 10_15_7; `MacIntel`; patch WebGL ANGLE Metal, hardware, client hints macOS |
+| `native` | UA/platform follow the host; WebGL/hardware are **not** patched; locale/timezone come from the system if no geo is available |
+| `windows` | Windows NT 10.0 UA; `Win32`; patches WebGL ANGLE D3D11, hardware, and client hints platform Windows |
+| `macos` | Macintosh Intel 10_15_7 UA; `MacIntel`; patches WebGL ANGLE Metal, hardware, and client hints macOS |
 
-Hiện preset macOS dùng Intel UA (không phải Apple Silicon UA) để khớp `platform` và WebGL
-ổn định. Đây là lựa chọn có chủ ý; nếu cần Apple Silicon UA, phải thêm preset mới và sửa
-`verify-fingerprint.ts`.
+The macOS preset currently uses an Intel UA (not an Apple Silicon UA) to keep `platform`
+and WebGL consistent. This is a deliberate choice; if you need an Apple Silicon UA, you
+must add a new preset and update `verify-fingerprint.ts`.
 
 ---
 
@@ -72,30 +73,33 @@ Hiện preset macOS dùng Intel UA (không phải Apple Silicon UA) để khớp
 
 `applyGeo(fingerprint, geo)`:
 
-1. `countryCode` → locale qua bảng `src/lib/geo-locale.ts` (US→en-US, DE→de-DE, VN→vi-VN…).
-2. `geo.timezone` nếu là IANA hợp lệ → canonical hoá bằng ICU
-   (`Asia/Ho_Chi_Minh` → `Asia/Saigon`, `Europe/Kyiv` → `Europe/Kiev`).
-3. Nếu `localePinned` → giữ locale người dùng.
-4. Nếu `timezonePinned` → giữ timezone người dùng.
+1. `countryCode` → locale via the `src/lib/geo-locale.ts` table (US→en-US, DE→de-DE,
+   VN→vi-VN…).
+2. `geo.timezone` if it is a valid IANA name → canonicalize with ICU (`Asia/Ho_Chi_Minh` →
+   `Asia/Saigon`, `Europe/Kyiv` → `Europe/Kiev`).
+3. If `localePinned` → keep the user's locale.
+4. If `timezonePinned` → keep the user's timezone.
 
-Canonical hoá quan trọng vì Chrome trả `Intl.DateTimeFormat().resolvedOptions().timeZone`
-theo tên ICU; lưu tên khác sẽ làm metadata lệch page.
+Canonicalization matters because Chrome returns `Intl.DateTimeFormat().resolvedOptions().timeZone`
+using the ICU name; storing a different name would make the metadata diverge from the page.
 
-### Pin hay auto?
+### Pin or auto?
 
-- **Auto** (mặc định): locale/timezone bám IP thoát. Phù hợp profile gắn với proxy cố định.
-- **Pin locale**: người dùng Việt muốn UI tiếng Anh nhưng IP US vẫn hợp lý (expat).
-- **Pin timezone**: ít dùng; chỉ khi cần khớp lịch làm việc.
+- **Auto** (default): locale/timezone follow the egress IP. Suitable for profiles tied to a
+  fixed proxy.
+- **Pin locale**: a Vietnamese user who wants an English UI but a US IP is still plausible
+  (expat).
+- **Pin timezone**: rarely used; only when you need to match a work schedule.
 
-UI: để trống = auto; nhập giá trị = pin. API: gửi `null` để bỏ pin.
+UI: leave empty = auto; enter a value = pin. API: send `null` to remove the pin.
 
 ---
 
-## 4. Những gì được spoof
+## 4. What is spoofed
 
-### 4.1 Qua Playwright context options
+### 4.1 Via Playwright context options
 
-| Surface | Cơ chế |
+| Surface | Mechanism |
 | --- | --- |
 | `navigator.userAgent` | `userAgent` |
 | `navigator.language(s)` | `locale` |
@@ -104,7 +108,7 @@ UI: để trống = auto; nhập giá trị = pin. API: gửi `null` để bỏ 
 | `prefers-color-scheme` | `colorScheme` |
 | `Accept-Language` header | `extraHTTPHeaders` |
 
-### 4.2 Qua CDP (`Emulation.setUserAgentOverride`)
+### 4.2 Via CDP (`Emulation.setUserAgentOverride`)
 
 - `userAgent`
 - `acceptLanguage`
@@ -113,44 +117,44 @@ UI: để trống = auto; nhập giá trị = pin. API: gửi `null` để bỏ 
   - `brands`, `fullVersionList`, `fullVersion`
   - `platform`, `platformVersion`, `architecture`, `model`, `mobile`, `bitness`, `wow64`
 
-Áp dụng cho từng page khi tạo và trước khi điều hướng bằng API. Page do site tự mở
-(`window.open`) được patch ngay khi Playwright phát event `page`, nhưng request đầu tiên
-của popup có thể đã bắt đầu — giới hạn đã biết.
+Applied to each page at creation and before navigation through the API. Pages opened by the
+site itself (`window.open`) are patched as soon as Playwright emits the `page` event, but the
+popup's first request may already have started — a known limitation.
 
-### 4.3 Qua init script (mọi frame)
+### 4.3 Via init script (every frame)
 
-`fingerprintInitScript(fp)` chạy trước script của trang:
+`fingerprintInitScript(fp)` runs before the page's own scripts:
 
-| Thuộc tính | Giá trị |
+| Property | Value |
 | --- | --- |
 | `navigator.webdriver` | `false` |
 | `navigator.platform` | `fp.platform` |
 | `navigator.hardwareConcurrency` | 8/12/16 |
 | `navigator.deviceMemory` | 8/16 |
-| `navigator.language`, `languages` | theo locale, dạng `[locale, base]` |
-| `navigator.userAgent`, `appVersion` | theo fp |
+| `navigator.language`, `languages` | per locale, as `[locale, base]` |
+| `navigator.userAgent`, `appVersion` | per fp |
 | `navigator.vendor` | `Google Inc.` |
 | `navigator.userAgentData` | brands, platform, `getHighEntropyValues()` |
-| `navigator.plugins`, `mimeTypes` | bộ PDF viewer desktop |
-| `window.chrome.runtime` | object rỗng (giống Chrome thường) |
-| WebGL `UNMASKED_VENDOR_WEBGL` / `UNMASKED_RENDERER_WEBGL` | theo fp (qua `getParameter` 37445/37446 và extension) |
+| `navigator.plugins`, `mimeTypes` | desktop PDF viewer set |
+| `window.chrome.runtime` | empty object (like regular Chrome) |
+| WebGL `UNMASKED_VENDOR_WEBGL` / `UNMASKED_RENDERER_WEBGL` | per fp (via `getParameter` 37445/37446 and the extension) |
 
-Mọi getter dùng `Object.defineProperty` trên prototype, `configurable: true`.
+All getters use `Object.defineProperty` on the prototype with `configurable: true`.
 
 ### 4.4 Launch args
 
-| Arg | Mục đích |
+| Arg | Purpose |
 | --- | --- |
-| `--disable-blink-features=AutomationControlled` | ẩn dấu hiệu automation của Chromium |
-| `ignoreDefaultArgs: ["--enable-automation"]` | Playwright không bật automation banner |
-| `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` | chặn WebRTC UDP đi thẳng khi có proxy |
-| `--lang=<locale>` | ngôn ngữ UI/engine |
-| `--password-store=basic` | tránh keyring prompt trên Linux |
-| `--no-sandbox` | chỉ thêm trên Linux (môi trường dev/container) |
+| `--disable-blink-features=AutomationControlled` | hides Chromium's automation markers |
+| `ignoreDefaultArgs: ["--enable-automation"]` | Playwright does not enable the automation banner |
+| `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` | blocks WebRTC UDP from going direct when a proxy is present |
+| `--lang=<locale>` | UI/engine language |
+| `--password-store=basic` | avoids the keyring prompt on Linux |
+| `--no-sandbox` | added on Linux only (dev/container environments) |
 
 ---
 
-## 5. Kiểm chứng
+## 5. Verification
 
 ```bash
 npm run verify:fingerprint
@@ -158,59 +162,60 @@ npm run verify:fingerprint
 
 Script:
 
-1. Sinh fingerprint seed cố định, OS `windows`.
-2. Mở Chrome headless với đúng context options + init script.
-3. Đọc lại từ page: UA, webdriver, platform, languages, hardware, deviceMemory, Intl
-   timezone, `userAgentData` + high entropy, `window.chrome`, screen/DPR, WebGL vendor +
-   renderer (kể cả debug extension).
-4. So sánh từng field; in mismatch và exit code 1 nếu lệch.
+1. Generates a fingerprint with a fixed seed and OS `windows`.
+2. Opens headless Chrome with the exact context options + init script.
+3. Reads back from the page: UA, webdriver, platform, languages, hardware, deviceMemory,
+   Intl timezone, `userAgentData` + high entropy, `window.chrome`, screen/DPR, WebGL vendor +
+   renderer (including the debug extension).
+4. Compares each field; prints mismatches and exits with code 1 if anything diverges.
 
-Script này là **hợp đồng** giữa code và browser. Khi thêm surface mới, thêm assert tương
-ứng.
+This script is the **contract** between the code and the browser. When adding a new surface,
+add the corresponding assert.
 
 ---
 
-## 6. Giới hạn đã biết
+## 6. Known limitations
 
-| Surface | Trạng thái | Rủi ro |
+| Surface | Status | Risk |
 | --- | --- | --- |
-| Canvas fingerprint | Không spoof | GPU/OS thật vẫn tạo hash khác profile “cùng fingerprint” |
-| WebAudio | Không spoof | hash audio |
-| Fonts | Không spoof | danh sách font host có thể lộ Linux/Windows |
-| TLS/JA3 | **Thật của Chrome** (tốt) | không khớp nếu profile giả OS khác host? JA3 không phụ thuộc OS nhiều |
-| WebRTC | Giảm thiểu bằng policy | có thể vẫn lộ public IP nếu policy bị bỏ qua |
-| Client hints của request đầu popup | Có thể lệch | page event đến sau khi request bắt đầu |
-| `navigator.plugins` | Object giả, không phải `PluginArray` | JS nâng cao có thể phát hiện |
-| Geolocation API | Không spoof | vị trí thật nếu user grant; Chrome sẽ prompt |
-| Media devices | Không spoof | số lượng/ID thiết bị thật |
-| Battery, Bluetooth, USB | Không spoof | ít dùng để fingerprint |
-| DNS | Theo proxy (SOCKS5 domain / CONNECT hostname) | direct thì DNS thật |
-| HTTP/2 fingerprint | Thật của Chrome | tốt |
-| Timezone alias | Canonical hoá | đã xử lý |
-| Screen vs cửa sổ thật | Window size có thể bị OS scale | `--window-size` + viewport |
+| Canvas fingerprint | Not spoofed | the real GPU/OS still produces a hash different from another profile with the "same fingerprint" |
+| WebAudio | Not spoofed | audio hash |
+| Fonts | Not spoofed | the host's font list may reveal Linux/Windows |
+| TLS/JA3 | **Real Chrome** (good) | mismatch if a profile spoofs an OS different from the host? JA3 does not depend much on OS |
+| WebRTC | Mitigated by policy | may still leak the public IP if the policy is bypassed |
+| Client hints of the popup's first request | May diverge | the page event arrives after the request has started |
+| `navigator.plugins` | Fake object, not a `PluginArray` | advanced JS can detect it |
+| Geolocation API | Not spoofed | real location if the user grants permission; Chrome will prompt |
+| Media devices | Not spoofed | real device count/IDs |
+| Battery, Bluetooth, USB | Not spoofed | rarely used for fingerprinting |
+| DNS | Follows the proxy (SOCKS5 domain / CONNECT hostname) | direct means real DNS |
+| HTTP/2 fingerprint | Real Chrome | good |
+| Timezone alias | Canonicalized | already handled |
+| Screen vs actual window | Window size may be scaled by the OS | `--window-size` + viewport |
 
-### Khuyến nghị vận hành
+### Operational recommendations
 
-- Một profile = một tài khoản = một IP ổn định. Đổi proxy liên tục làm geo/fingerprint
-  nhảy múa.
-- Warm-up: mở vài trang thật, cuộn/click tự nhiên trước khi làm việc chính.
-- Không bật/tắt proxy giữa phiên. Stop → đổi → launch lại.
-- Với `osProfile` khác host, tránh dùng tính năng native như font rendering, extension,
-  WebGL app nặng; rủi ro lộ host tăng.
-- Không dùng headless cho profile thật (`VB_HEADLESS=0`).
+- One profile = one account = one stable IP. Changing proxies constantly makes
+  geo/fingerprint jump around.
+- Warm-up: open a few real pages, scroll/click naturally before doing the main work.
+- Do not enable/disable the proxy mid-session. Stop → change → launch again.
+- With an `osProfile` different from the host, avoid native features such as font rendering,
+  extensions, and heavy WebGL apps; the risk of exposing the host increases.
+- Do not use headless for real profiles (`VB_HEADLESS=0`).
 
 ---
 
-## 7. Thêm một surface mới (ví dụ canvas noise)
+## 7. Adding a new surface (e.g., canvas noise)
 
-1. Thêm field vào `Fingerprint` (`canvasSeed?: string`).
-2. Sinh trong `generateFingerprint` từ picker.
-3. Patch trong `fingerprintInitScript` **trước** khi trang chạy; giữ tính deterministic
-   theo seed (cùng profile → cùng canvas hash).
-4. Thêm assert vào `scripts/verify-fingerprint.ts`.
-5. Ghi vào bảng §4, §6, CHANGELOG, DEVLOG.
-6. Test với ít nhất 3 seed khác nhau, đảm bảo hash ổn định trong cùng session và khác giữa
-   các profile.
+1. Add a field to `Fingerprint` (`canvasSeed?: string`).
+2. Generate it in `generateFingerprint` from a picker.
+3. Patch it in `fingerprintInitScript` **before** the page runs; keep it deterministic per
+   seed (same profile → same canvas hash).
+4. Add an assert to `scripts/verify-fingerprint.ts`.
+5. Document it in the tables in §4, §6, CHANGELOG, and DEVLOG.
+6. Test with at least 3 different seeds, ensuring the hash is stable within a session and
+   different across profiles.
 
-Tiêu chí không được phá: **không treo trang**, **không làm lệch các surface khác**, **không
-tăng entropy theo hướng dễ phát hiện** (ví dụ mọi profile cùng một noise pattern).
+Non-negotiable criteria: **do not hang the page**, **do not skew other surfaces**, **do not
+increase entropy in an easily detectable direction** (for example, every profile using the
+same noise pattern).

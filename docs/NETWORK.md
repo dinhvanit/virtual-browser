@@ -1,28 +1,28 @@
-# Mạng: proxy, VPN, relay, DNS, WebRTC
+# Network: proxy, VPN, relay, DNS, WebRTC
 
-Tài liệu này giải thích **một request của Chrome đi qua những đâu** và tại sao code lại
-phức tạp hơn “truyền proxy URL cho Chrome”.
+This document explains **where a Chrome request goes** and why the code is more complex
+than "passing a proxy URL to Chrome".
 
 ---
 
-## 1. Sơ đồ tổng quát
+## 1. Overview diagram
 
 ```text
-                        ┌──────────────────────────── profile ────────────────────────────┐
+                        ┌──────────────────────────── profile ─────────────────────────────┐
                         │                                                                  │
- Chrome (user-data A)   │  --proxy-server=http://127.0.0.1:Q                              │
+ Chrome (user-data A)   │  --proxy-server=http://127.0.0.1:Q                               │
         │               │                                                                  │
         ▼               │                                                                  │
-  relay (Q, no auth) ───┤── CONNECT / absolute-form                                    │
+  relay (Q, no auth) ───┤── CONNECT / absolute-form                                        │
         │               │                                                                  │
         ▼               │                                                                  │
- connectUpstream(profile.proxy)                                                          │
+ connectUpstream(profile.proxy)                                                            │
         │               │                                                                  │
-        ├─ http  ───────┘  TCP → CONNECT host:port → Proxy-Authorization: Basic …        │
+        ├─ http  ───────┘  TCP → CONNECT host:port → Proxy-Authorization: Basic …          │
         │                                                                                  │
         ├─ https ──────────  TLS → CONNECT host:port → Proxy-Authorization: Basic …        │
         │                                                                                  │
-        └─ socks5 ─────────  TCP → greeting → user/pass → CONNECT host:port (domain)      │
+        └─ socks5 ─────────  TCP → greeting → user/pass → CONNECT host:port (domain)       │
                                                                                            │
                         └──────────────────────────────────────────────────────────────────┘
 
@@ -30,77 +30,81 @@ phức tạp hơn “truyền proxy URL cho Chrome”.
  Chrome → socks5://127.0.0.1:P (wireproxy) → WireGuard peer → Internet
 ```
 
-- `Q` là port ngẫu nhiên do relay xin từ OS, bind `127.0.0.1`.
-- Mỗi profile khi chạy có relay riêng (nếu dùng proxy) hoặc dùng trực tiếp SOCKS5 của
-  wireproxy (nếu dùng VPN).
-- Không có proxy toàn cục cho server; server chỉ dùng mạng khi tra geo.
+- `Q` is a random port the relay requests from the OS and binds to `127.0.0.1`.
+- Each running profile has its own relay (when using a proxy) or uses wireproxy's SOCKS5
+  directly (when using VPN).
+- There is no global proxy for the server; the server only uses the network for geo lookups.
 
 ---
 
 ## 2. Proxy
 
-### 2.1 Loại hỗ trợ
+### 2.1 Supported types
 
-| Type | Kết nối tới proxy | Auth | Ghi chú |
+| Type | Connection to proxy | Auth | Notes |
 | --- | --- | --- | --- |
-| `http` | TCP | Basic (CONNECT) | phổ biến nhất |
-| `https` | TLS tới proxy | Basic (CONNECT) | proxy yêu cầu TLS, certificate phải hợp lệ |
-| `socks5` | TCP | RFC 1929 (user/pass) | remote DNS (gửi domain) |
+| `http` | TCP | Basic (CONNECT) | most common |
+| `https` | TLS to proxy | Basic (CONNECT) | proxy requires TLS, certificate must be valid |
+| `socks5` | TCP | RFC 1929 (user/pass) | remote DNS (sends domain) |
 
-Port bắt buộc 1–65535. Host không kèm scheme. Không hỗ trợ SOCKS4, SOCKS5 UDP ASSOCIATE.
+The port must be 1–65535. The host must not include a scheme. SOCKS4 and SOCKS5 UDP
+ASSOCIATE are not supported.
 
-### 2.2 Vì sao cần relay local?
+### 2.2 Why a local relay?
 
-Chrome **không** xử lý đáng tin cậy credential nhúng trong `--proxy-server`
-(`http://user:pass@host:port`), đặc biệt với SOCKS5. Các cách khác (extension, policy) đều
-nặng hoặc không ổn định. Relay giải quyết:
+Chrome does **not** reliably handle credentials embedded in `--proxy-server`
+(`http://user:pass@host:port`), especially with SOCKS5. Other approaches (extension, policy)
+are either heavy or unstable. The relay solves this:
 
-1. Chrome chỉ thấy proxy `http://127.0.0.1:Q` — không cần auth.
-2. Relay mở tunnel tới upstream, tự gắn `Proxy-Authorization` hoặc SOCKS5 auth.
-3. Credential không bao giờ nằm trong command line của Chrome (tránh lộ qua `ps`).
-4. Relay có thể thêm timeout, giới hạn header, log lỗi rõ ràng.
+1. Chrome only sees the proxy `http://127.0.0.1:Q` — no auth required.
+2. The relay opens a tunnel to the upstream and attaches `Proxy-Authorization` or SOCKS5
+   auth itself.
+3. Credentials never appear in Chrome's command line (avoiding exposure via `ps`).
+4. The relay can add timeouts, header limits, and clear error logs.
 
-Đánh đổi: thêm một hop TCP loopback (không đáng kể) và một process/port mỗi profile đang
-chạy.
+Trade-off: one extra loopback TCP hop (negligible) and one process/port per running
+profile.
 
-### 2.3 Hai dạng request relay phải xử lý
+### 2.3 Two request forms the relay must handle
 
-1. **CONNECT** (HTTPS, WebSocket wss, hầu hết request):
+1. **CONNECT** (HTTPS, WebSocket wss, most requests):
 
 ```http
 CONNECT example.com:443 HTTP/1.1
 Host: example.com:443
 ```
 
-Relay → `connectUpstream` → trả `HTTP/1.1 200 Connection Established` → pipe hai chiều.
+Relay → `connectUpstream` → returns `HTTP/1.1 200 Connection Established` → bidirectional
+pipe.
 
-2. **Absolute-form** (HTTP thường):
+2. **Absolute-form** (plain HTTP):
 
 ```http
 GET http://example.com/path?q=1 HTTP/1.1
 Host: example.com
 ```
 
-Relay mở tunnel TCP tới `example.com:80`, viết lại request thành `GET /path?q=1 HTTP/1.1`,
-bỏ `Proxy-Connection` và `Proxy-Authorization`, rồi pipe. Nhờ vậy Chrome có thể dùng
-keep-alive/body bình thường trên tunnel.
+The relay opens a TCP tunnel to `example.com:80`, rewrites the request as
+`GET /path?q=1 HTTP/1.1`, drops `Proxy-Connection` and `Proxy-Authorization`, then pipes.
+This lets Chrome use keep-alive/bodies normally over the tunnel.
 
-### 2.4 SOCKS5 handshake (tóm tắt)
+### 2.4 SOCKS5 handshake (summary)
 
 ```text
 client → [05, nmethods, methods...]
 server → [05, chosen]
-nếu chosen = 02:
+if chosen = 02:
   client → [01, ulen, user, plen, pass]
   server → [01, status]
 client → [05, 01, 00, ATYP, addr, port]
 server → [05, 00, 00, ATYP, baddr, bport]
 ```
 
-`ATYP`: 01 IPv4, 03 domain, 04 IPv6. Domain được proxy resolve (remote DNS). Code dùng
-seed/stream reader đọc đúng số byte, không ăn nhầm payload.
+`ATYP`: 01 IPv4, 03 domain, 04 IPv6. The domain is resolved by the proxy (remote DNS). The
+code uses a seeded/stream reader that reads the exact number of bytes, so it never consumes
+payload by mistake.
 
-Lỗi được map sang message người đọc được:
+Errors are mapped to human-readable messages:
 
 | Code | Message |
 | --- | --- |
@@ -113,28 +117,29 @@ Lỗi được map sang message người đọc được:
 | 7 | command not supported |
 | 8 | address type not supported |
 
-### 2.5 Timeout
+### 2.5 Timeouts
 
-| Giai đoạn | Mặc định |
+| Stage | Default |
 | --- | --- |
-| TCP tới proxy | 15 s (`connectUpstream`) |
-| TLS tới proxy `https` | 15 s |
+| TCP to proxy | 15 s (`connectUpstream`) |
+| TLS to proxy `https` | 15 s |
 | CONNECT response | 15 s |
 | SOCKS5 handshake | 15 s |
-| TLS tới target (trong `getViaProxy`) | 15 s |
-| Geo lookup toàn bộ (2 provider) | 9 s (`VB_GEO_TIMEOUT_MS`) |
-| Relay header chờ client | 120 s socket idle |
+| TLS to target (inside `getViaProxy`) | 15 s |
+| Geo lookup overall (2 providers) | 9 s (`VB_GEO_TIMEOUT_MS`) |
+| Relay header wait for client | 120 s socket idle |
 | Chrome navigation | 30 s |
 
-Mọi timeout đều **destroy socket** để không rò file descriptor.
+Every timeout **destroys the socket** so no file descriptors leak.
 
 ---
 
-## 3. VPN (WireGuard qua wireproxy)
+## 3. VPN (WireGuard via wireproxy)
 
-### 3.1 Yêu cầu config
+### 3.1 Config requirements
 
-`wireproxy` đọc file WireGuard chuẩn và mở SOCKS5 local. Cần block:
+`wireproxy` reads a standard WireGuard file and opens a local SOCKS5 listener. These blocks
+are required:
 
 ```ini
 [Interface]
@@ -151,44 +156,45 @@ AllowedIPs = 0.0.0.0/0
 BindAddress = 127.0.0.1:25344
 ```
 
-- `BindAddress` là **bắt buộc**; code parse port từ dòng này.
-- Nếu không tìm thấy → launch fail với message rõ.
-- Port nên cố định theo profile (mỗi profile một port) để tránh đụng.
-- `DNS` nên đặt nếu muốn DNS qua tunnel.
+- `BindAddress` is **required**; the code parses the port from this line.
+- If it is not found → launch fails with a clear message.
+- The port should be fixed per profile (one port per profile) to avoid collisions.
+- `DNS` should be set if you want DNS over the tunnel.
 
-### 3.2 Vòng đời
+### 3.2 Lifecycle
 
 ```text
 startVpn(profileId, configPath)
-  ├─ nếu đã chạy → trả port cũ
-  ├─ kiểm tra binary + file + BindAddress
+  ├─ if already running → return existing port
+  ├─ check binary + file + BindAddress
   ├─ spawn wireproxy -c <config>
-  ├─ gom stdout/stderr (100 dòng gần nhất)
-  ├─ poll TCP 127.0.0.1:port mỗi 250 ms, tối đa 10 s
-  ├─ nếu process exit / timeout → kill + throw (kèm log cuối)
-  └─ lưu Map<profileId, {child, port, log}>
+  ├─ collect stdout/stderr (last 100 lines)
+  ├─ poll TCP 127.0.0.1:port every 250 ms, up to 10 s
+  ├─ if process exits / times out → kill + throw (with trailing log)
+  └─ store Map<profileId, {child, port, log}>
 
 stopVpn(profileId)
   ├─ SIGTERM
-  ├─ chờ 2 s
-  └─ SIGKILL nếu chưa chết
+  ├─ wait 2 s
+  └─ SIGKILL if still alive
 ```
 
-`wireproxy` được kill khi:
+`wireproxy` is killed when:
 
-- profile stop;
-- launch lỗi;
-- server nhận SIGINT/SIGTERM;
-- process tự exit (map tự xoá qua event `exit`).
+- the profile stops;
+- launch fails;
+- the server receives SIGINT/SIGTERM;
+- the process exits on its own (the map entry is removed via the `exit` event).
 
-### 3.3 Ưu tiên
+### 3.3 Precedence
 
-Nếu profile có cả `vpn` và `proxy`, **VPN thắng**; proxy bị bỏ qua khi launch. Lý do:
-chain WireGuard → proxy thường không cải thiện gì (proxy vẫn là điểm cuối), dễ gây nhầm
-lẫn và khó debug. UI hiển thị chip VPN; để dùng proxy, tắt VPN.
+If a profile has both `vpn` and `proxy`, **VPN wins**; the proxy is ignored at launch.
+Reason: chaining WireGuard → proxy usually improves nothing (the proxy is still the
+endpoint), and it easily causes confusion and is hard to debug. The UI shows a VPN chip; to
+use the proxy, turn off the VPN.
 
-`POST /api/profiles/:id/check` khi có VPN: nếu VPN chưa chạy, start tạm → tra geo → stop
-nếu profile không chạy.
+`POST /api/profiles/:id/check` with VPN enabled: if the VPN is not running, start it
+temporarily → look up geo → stop it if the profile is not running.
 
 ---
 
@@ -203,85 +209,90 @@ lookupGeo(proxy, timeout)
        (ip, city, region, country_name, country_code, timezone, org)
 ```
 
-- `getViaProxy()` mở tunnel qua đúng proxy rồi TLS + GET. **Không** dùng `fetch` của Node
-  vì fetch không đi qua tunnel tự viết.
-- Có deadline tổng; provider thứ hai chỉ được gọi nếu còn ≥ 500 ms.
-- Kết quả lưu `GeoInfo`, gồm `provider`, `latencyMs`, `checkedAt`.
-- Launch fail geo **không** chặn browser (xem ARCHITECTURE §5.2).
-- `POST /api/proxy/check` test proxy không lưu; `POST /api/profiles/:id/check` lưu geo.
+- `getViaProxy()` opens a tunnel through the correct proxy, then TLS + GET. It does **not**
+  use Node's `fetch`, because fetch does not go through the hand-written tunnel.
+- There is an overall deadline; the second provider is only called if at least 500 ms
+  remain.
+- The result is stored as `GeoInfo`, including `provider`, `latencyMs`, and `checkedAt`.
+- A failed geo lookup at launch does **not** block the browser (see ARCHITECTURE §5.2).
+- `POST /api/proxy/check` tests a proxy without saving; `POST /api/profiles/:id/check` saves
+  geo.
 
-Tại sao phải tra qua proxy? Nếu tra direct, IP/geo là của host → timezone/locale bị gán
-sai, và UI hiển thị IP thật. Đây là lỗi bảo mật phổ biến của các tool kém.
+Why must the lookup go through the proxy? If queried directly, the IP/geo is the host's →
+timezone/locale are assigned incorrectly, and the UI shows the real IP. This is a common
+security bug in inferior tools.
 
 ---
 
 ## 5. DNS
 
-| Đường ra | DNS resolver | Ghi chú |
+| Egress path | DNS resolver | Notes |
 | --- | --- | --- |
-| Direct | OS resolver | bình thường |
-| HTTP/HTTPS proxy | proxy resolve khi CONNECT | Chrome không resolve local |
-| SOCKS5 | domain được gửi trong request (ATYP=03) | remote DNS tại proxy |
-| WireGuard | theo `DNS=` trong config hoặc OS nếu thiếu | nên đặt DNS trong config |
+| Direct | OS resolver | normal |
+| HTTP/HTTPS proxy | proxy resolves on CONNECT | Chrome does not resolve locally |
+| SOCKS5 | domain is sent in the request (ATYP=03) | remote DNS at the proxy |
+| WireGuard | per `DNS=` in the config, or the OS if missing | set DNS in the config |
 
-Với SOCKS5, code ưu tiên gửi hostname (không resolve trước) để tránh DNS leak. Nếu target
-là IP literal, gửi ATYP tương ứng.
+With SOCKS5, the code prefers to send the hostname (no pre-resolution) to avoid DNS leaks.
+If the target is an IP literal, it sends the corresponding ATYP.
 
-Kiểm tra leak:
+Leak check:
 
 ```bash
-# Trong browser của profile, mở:
+# In the profile's browser, open:
 https://browserleaks.com/dns
 https://browserleaks.com/webrtc
 https://ipinfo.io
 ```
 
-Kỳ vọng: IP, DNS, WebRTC đều thuộc proxy/VPN; không thấy IP nhà mạng thật.
+Expected: IP, DNS, and WebRTC all belong to the proxy/VPN; the real ISP IP is not visible.
 
 ---
 
 ## 6. WebRTC
 
-Chrome có thể dùng UDP trực tiếp để lấy public IP, bỏ qua proxy HTTP/SOCKS. Khi profile
-có proxy/VPN, runtime thêm:
+Chrome can use direct UDP to obtain the public IP, bypassing an HTTP/SOCKS proxy. When a
+profile has a proxy/VPN, the runtime adds:
 
 ```text
 --force-webrtc-ip-handling-policy=disable_non_proxied_udp
 ```
 
-Tác dụng:
+Effect:
 
-- WebRTC không dùng UDP không qua proxy.
-- Có thể làm WebRTC không hoạt động (video call) — đánh đổi có chủ ý.
-- Không thay đổi IP của page thường.
+- WebRTC does not use UDP that bypasses the proxy.
+- It may break WebRTC (video calls) — a deliberate trade-off.
+- It does not change the IP of normal pages.
 
-Đây là **giảm thiểu**, không phải bảo đảm tuyệt đối. Nếu cần kiểm tra:
+This is a **mitigation**, not an absolute guarantee. To verify:
 
-1. Launch profile có proxy.
-2. Mở `https://browserleaks.com/webrtc`.
-3. Không được thấy IP LAN/public thật.
-4. Nếu thấy → kiểm tra Chrome version/policy, thử thêm
-   `--webrtc-ip-handling-policy=disable_non_proxied_udp` (không có `force`) hoặc tắt
-   WebRTC hoàn toàn bằng policy doanh nghiệp.
+1. Launch a profile with a proxy.
+2. Open `https://browserleaks.com/webrtc`.
+3. The real LAN/public IP must not appear.
+4. If it does → check the Chrome version/policy, try adding
+   `--webrtc-ip-handling-policy=disable_non_proxied_udp` (without `force`), or disable
+   WebRTC entirely via enterprise policy.
 
 ---
 
-## 7. Kiểm thử relay/proxy
+## 7. Testing relay/proxy
 
 ```bash
 npm run verify:proxy
 ```
 
-Script tự dựng:
+The script sets up:
 
-1. **HTTP CONNECT proxy có auth** — kiểm tra `connectUpstream` gửi đúng Basic auth.
-2. **SOCKS5 proxy có auth** — kiểm tra greeting, RFC1929, CONNECT domain.
-3. **Relay local** — Chrome-facing endpoint không auth, cả CONNECT và absolute-form.
-4. **Sai mật khẩu** — phải bị 407 / auth failed, không được fail-open.
+1. **HTTP CONNECT proxy with auth** — verifies that `connectUpstream` sends the correct
+   Basic auth.
+2. **SOCKS5 proxy with auth** — verifies the greeting, RFC1929, and CONNECT by domain.
+3. **Local relay** — Chrome-facing endpoint with no auth, both CONNECT and absolute-form.
+4. **Wrong password** — must result in 407 / auth failed, and must not fail open.
 
-Nó dùng IP thật của máy để tra geo, nên cần Internet. Không cần Chrome.
+It uses the machine's real IP for the geo lookup, so it needs Internet. Chrome is not
+required.
 
-Test với proxy thật:
+Test with a real proxy:
 
 ```bash
 curl -X POST http://127.0.0.1:8787/api/proxy/check \
@@ -291,30 +302,31 @@ curl -X POST http://127.0.0.1:8787/api/proxy/check \
 
 ---
 
-## 8. Bảng lỗi thường gặp
+## 8. Common errors
 
-| Triệu chứng | Nguyên nhân | Cách xử lý |
+| Symptom | Cause | Fix |
 | --- | --- | --- |
-| `proxy: CONNECT rejected with HTTP 407` | sai user/pass | kiểm tra lại; thử `curl -x` |
-| `proxy: CONNECT rejected with HTTP 403` | proxy chặn IP/port | liên hệ provider |
-| `proxy: CONNECT timed out` | proxy treo/firewall | đổi endpoint, kiểm tra port |
-| `socks5: authentication failed` | sai auth | như trên |
-| `socks5: connection refused` | proxy từ chối target | target chặn hoặc proxy policy |
-| Chrome mở nhưng mọi trang lỗi proxy | relay chết / profile start lỗi | xem status `error`, log server |
-| `wireproxy binary not found` | chưa cài | cài hoặc `VB_WIREPROXY` |
-| `Could not find a [Socks5] BindAddress` | config thiếu block | thêm block như §3.1 |
-| `wireproxy did not open ...` | config sai / port bận / peer chết | chạy `wireproxy -c` tay |
-| Geo ra IP thật | check direct hoặc proxy không áp dụng | dùng `/profiles/:id/check`, kiểm tra `proxyServer` trong status |
-| WebRTC lộ IP | policy không ăn | xem §6 |
+| `proxy: CONNECT rejected with HTTP 407` | wrong user/pass | check again; try `curl -x` |
+| `proxy: CONNECT rejected with HTTP 403` | proxy blocks IP/port | contact the provider |
+| `proxy: CONNECT timed out` | proxy hung/firewall | change endpoint, check port |
+| `socks5: authentication failed` | wrong auth | as above |
+| `socks5: connection refused` | proxy rejected the target | target blocked or proxy policy |
+| Chrome opens but every page shows a proxy error | relay died / profile failed to start | check the `error` status and server logs |
+| `wireproxy binary not found` | not installed | install it or set `VB_WIREPROXY` |
+| `Could not find a [Socks5] BindAddress` | config missing the block | add the block as in §3.1 |
+| `wireproxy did not open ...` | bad config / port in use / dead peer | run `wireproxy -c` manually |
+| Geo shows the real IP | direct check or proxy not applied | use `/profiles/:id/check`, check `proxyServer` in the status |
+| WebRTC leaks the IP | policy not applied | see §6 |
 
 ---
 
-## 9. Bảo mật mạng
+## 9. Network security
 
-- Relay bind loopback, không auth. Process khác trên cùng máy có thể dùng relay khi profile
-  đang chạy — chấp nhận trong mô hình local.
-- `profiles.json` lưu proxy password plain text. Bảo vệ quyền file (`chmod 600` nếu cần).
-- `VB_HOST=0.0.0.0` mà không có `VB_TOKEN` = bất kỳ ai trong LAN điều khiển được browser.
-  Đừng làm vậy.
-- VPN config chứa private key; không commit, không chia sẻ log wireproxy.
-- Không log header `Proxy-Authorization`; code không làm vậy.
+- The relay binds to loopback with no auth. Another process on the same machine can use the
+  relay while the profile is running — accepted in the local model.
+- `profiles.json` stores proxy passwords in plain text. Protect file permissions with
+  `chmod 600` if needed.
+- `VB_HOST=0.0.0.0` without `VB_TOKEN` = anyone on the LAN can control the browser. Don't do
+  that.
+- VPN configs contain a private key; do not commit them and do not share wireproxy logs.
+- Never log `Proxy-Authorization` headers; the code does not.

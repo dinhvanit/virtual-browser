@@ -5,98 +5,130 @@
 [![Chrome](https://img.shields.io/badge/browser-real%20Chrome-4285F4.svg)](https://www.google.com/chrome/)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](docs/ROADMAP.md)
 
-**Trình quản lý profile Chrome self-hosted, local-first: mỗi profile là một danh tính
-riêng với proxy/VPN riêng và fingerprint nhất quán.**
+**Self-hosted, local-first Chrome profile manager for QA, geo testing, and browser
+automation.** Each profile is an isolated identity with its own proxy/VPN, its own
+`user-data-dir`, and a coherent fingerprint.
 
-> Self-hosted Chrome profile manager for QA, geo testing and browser automation: isolated
-> profiles, per-profile proxy/VPN, coherent fingerprints, local REST API. Data never leaves
-> your machine.
+> **Status:** `v0.2.0` — beta, designed for a personal machine and bound to `127.0.0.1`.
+> Not intended to be exposed to the Internet. Read [SECURITY](docs/SECURITY.md) before
+> changing `VB_HOST`.
 
-> **Trạng thái:** `v0.2.0` — beta, thiết kế cho máy cá nhân, bind `127.0.0.1`.
-> Không thiết kế để mở ra Internet. Đọc [SECURITY](docs/SECURITY.md) trước khi đổi `VB_HOST`.
+![Dashboard: live view, tabs, fingerprint and geo](docs/dashboard.png)
 
-![Dashboard: live view, tabs, fingerprint và geo](docs/dashboard.png)
-
-_Dashboard: live view qua CDP screencast, tab/URL bar, fingerprint và IP thoát của từng profile._
+_Dashboard: live CDP screencast, tab/URL bar, fingerprint facts, and the profile's exit IP._
 
 ---
 
-## Mục lục
+## Table of contents
 
-- [Vì sao có dự án này](#vì-sao-có-dự-án-này)
-- [Tính năng](#tính-năng)
-- [Yêu cầu](#yêu-cầu)
-- [Chạy nhanh](#chạy-nhanh)
-- [Quy trình sử dụng](#quy-trình-sử-dụng)
-- [Cấu hình](#cấu-hình)
-- [Dữ liệu & bảo mật](#dữ-liệu--bảo-mật)
-- [Kiến trúc](#kiến-trúc)
+- [Why this exists](#why-this-exists)
+- [Who it is for](#who-it-is-for)
+- [Features](#features)
+- [Virtual Browser vs. cloud browser services](#virtual-browser-vs-cloud-browser-services)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [Configuration](#configuration)
+- [Data and security](#data-and-security)
+- [Architecture](#architecture)
 - [API](#api)
-- [Kiểm chứng](#kiểm-chứng)
-- [Giới hạn đã biết](#giới-hạn-đã-biết)
-- [Khi nào nên / không nên dùng](#khi-nào-nên--không-nên-dùng)
-- [Đóng góp](#đóng-góp)
-- [Giấy phép](#giấy-phép)
+- [Verification](#verification)
+- [Known limitations](#known-limitations)
+- [Acceptable use](#acceptable-use)
+- [FAQ](#faq)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
-## Vì sao có dự án này
+## Why this exists
 
-Làm việc với nhiều tài khoản, nhiều vùng địa lý hoặc nhiều test case thường gặp cùng một
-vấn đề: **profile trình duyệt bị lẫn dữ liệu, IP lệch vùng, và fingerprint không khớp nhau**
-(UA Windows nhưng timezone Việt Nam, GPU Mac, locale sai).
+Working with multiple accounts, regions, or test cases usually breaks in the same three
+places: **profiles leak data into each other, the exit IP does not match the identity, and
+the fingerprint is internally inconsistent** — a Windows UA with a Vietnamese timezone, a
+Mac GPU string, or the wrong locale.
 
-Virtual Browser giải quyết bằng cách tách mỗi danh tính thành một profile Chrome độc lập:
+Virtual Browser separates every identity into its own Chrome profile:
 
-- user-data-dir riêng (cookie, localStorage, cache không lẫn);
-- proxy/VPN riêng, có thể có username/password;
-- fingerprint sinh **deterministic** từ seed của profile và đồng bộ theo IP thoát;
-- điều khiển qua dashboard hoặc REST API, không cần tự viết script cho từng bước.
+- a dedicated `user-data-dir` (cookies, localStorage, and cache never mix);
+- a dedicated proxy or WireGuard tunnel, with optional credentials;
+- a **deterministic fingerprint** generated from the profile seed and synced with the
+  actual exit IP;
+- a dashboard and REST API instead of a pile of one-off scripts.
 
-Điểm khác biệt so với dịch vụ cloud browser: **dữ liệu và phiên nằm trên máy bạn**, phiên
-được giữ lâu dài, và bạn tự chọn đường mạng.
+Unlike cloud browser services, **the browser, the session, and the data stay on your
+machine**. Sessions are persistent, you choose the network path, and there is no per-seat
+subscription. It is also a self-hosted alternative to commercial anti-detect browsers: you
+control the fingerprint, the network path, and the data.
 
----
+## Who it is for
 
-## Tính năng
+- **QA and test engineers** verifying pricing, language, layout, and checkout flows by
+  country without maintaining a VM fleet.
+- **Automation developers** who need clean, persistent browser profiles behind a local REST
+  API, each with its own proxy.
+- **Agencies and operators** managing multiple client accounts they own or are authorized
+  to access, with strict session separation.
+- **Privacy and security researchers** comparing fingerprints and checking for IP/WebRTC
+  leaks.
+- **Developers** who want a self-hosted alternative to commercial profile managers and do
+  not want browsing data in someone else's cloud.
 
-| Nhóm | Hiện có |
+## Features
+
+| Area | What you get |
 | --- | --- |
-| **Profile** | tạo/sửa/xoá/nhân bản, tags, notes, start URL, user-data-dir riêng, export JSON |
-| **Mạng** | HTTP/HTTPS/SOCKS5 proxy **có auth**, WireGuard qua `wireproxy`, direct |
-| **Relay local** | proxy không credential cho Chrome, xử lý CONNECT + absolute-form |
-| **Fingerprint** | UA + client hints theo Chrome thật, platform, locale, timezone, screen, DPR, WebGL, hardwareConcurrency, deviceMemory, color scheme, plugins, `navigator.webdriver` |
-| **Đồng bộ geo** | tra IP thoát qua đúng proxy/VPN → gán locale + timezone, hiển thị country/city/ISP |
-| **Pin locale/timezone** | giữ lựa chọn thủ công, không bị geo ghi đè |
-| **Vận hành** | launch/stop, live thumbnail (CDP screencast), tab list, mở/đóng/chuyển tab, URL bar |
-| **Kiểm tra** | test proxy/IP độc lập, check IP của profile |
-| **API** | REST JSON đầy đủ, phục vụ luôn UI tĩnh |
-| **Bảo mật** | `VB_TOKEN` tuỳ chọn, CSRF same-origin guard, Host/DNS-rebinding guard, security headers |
+| **Profiles** | create/edit/delete/duplicate, tags, notes, start URL, isolated `user-data-dir`, JSON export |
+| **Network** | HTTP/HTTPS/SOCKS5 proxies **with auth**, WireGuard via `wireproxy`, or direct |
+| **Local relay** | credential-free proxy endpoint for Chrome; handles CONNECT and absolute-form HTTP |
+| **Fingerprint** | real Chrome UA + client hints, platform, locale, timezone, screen, DPR, WebGL, `hardwareConcurrency`, `deviceMemory`, color scheme, plugins, `navigator.webdriver` |
+| **Geo sync** | exit-IP lookup through the profile's real path → locale/timezone, country/city/ISP |
+| **Pinning** | manually pin locale/timezone so geo sync cannot override them |
+| **Runtime** | launch/stop, live thumbnail via CDP screencast, tab list, open/close/switch tabs, URL bar |
+| **Checks** | standalone proxy/IP test plus per-profile exit-IP check |
+| **API** | full REST JSON API; the same server serves the static UI |
+| **Security** | optional `VB_TOKEN`, CSRF same-origin guard, Host/DNS-rebinding guard, security headers |
 
-**Không phải:** trình duyệt cloud, công cụ test cross-browser (Safari/iOS/Android), hay
-sandbox malware. Xem [Giới hạn](#giới-hạn-đã-biết).
+**Not included:** cloud browsers, a cross-browser/device matrix (Safari, iOS, Android), or a
+malware sandbox. See [Known limitations](#known-limitations).
 
----
+## Virtual Browser vs. cloud browser services
 
-## Yêu cầu
+Cloud testing services run disposable browsers on vendor infrastructure. Virtual Browser
+runs persistent, customizable profiles on your machine. They solve different problems.
 
-- **Node.js ≥ 20** (khuyến nghị 22 LTS).
-- **Google Chrome / Chromium** cài trên máy. Dự án dùng Chrome thật qua `playwright-core`,
-  **không tải Chromium bundled** — để UA, client hints, codec và TLS fingerprint khớp Chrome
-  thật.
-- (Tuỳ chọn) **wireproxy** nếu dùng WireGuard: <https://github.com/pufferffish/wireproxy>
-- Linux headed cần X11/Wayland. Server/CI không màn hình dùng `VB_HEADLESS=1`.
+| | Virtual Browser | Cloud browser services |
+| --- | --- | --- |
+| Browser execution | Your machine | Vendor VMs |
+| Session lifetime | Persistent (cookies, logins kept) | Usually disposable |
+| Fingerprint control | Deterministic, customizable, geo-synced | Real browser/VM, not customizable |
+| Network | Bring your own proxy/VPN | Vendor IP pools (often paid add-ons) |
+| Data ownership | Stays local | Leaves your machine |
+| Cost | Self-hosted, unlimited profiles | Per-seat subscription |
+| Automation | Local REST API (CDP internally) | Vendor API/streaming |
+| Environment coverage | Chrome on the host OS | Broad OS/browser/device matrix |
+| Malware isolation | Not a sandbox | Disposable VM sandbox |
 
-Kiểm tra nhanh:
+Use cloud services for "does this render on Safari iOS 18?" Use Virtual Browser for "operate
+as this identity, from this region, with these cookies, for weeks."
+
+## Requirements
+
+- **Node.js ≥ 20** (22 LTS recommended).
+- **Google Chrome / Chromium** installed on the host. The project drives real Chrome
+  through `playwright-core`; it does **not** download bundled Chromium, so UA, client hints,
+  codecs, and TLS behavior match the installed browser.
+- Optional: **wireproxy** for WireGuard — <https://github.com/pufferffish/wireproxy>
+- Linux headed mode needs X11/Wayland. Headless servers/CI can use `VB_HEADLESS=1`.
+
+Quick check:
 
 ```bash
 node -v          # >= 20
 google-chrome --version
 ```
 
----
-
-## Chạy nhanh
+## Quick start
 
 ```bash
 git clone https://github.com/dinhvanit/virtual-browser.git
@@ -105,108 +137,103 @@ npm ci
 npm start
 ```
 
-Mở **http://127.0.0.1:8787**.
+Open **http://127.0.0.1:8787**.
 
-Dev mode (tự reload khi sửa server):
+Development mode (server restarts on change):
 
 ```bash
 npm run dev
 ```
 
-Chạy thử với dữ liệu tách riêng, không màn hình:
+Try it with an isolated data directory and no display:
 
 ```bash
 VB_HEADLESS=1 VB_PORT=8799 VB_DATA_DIR=/tmp/vb-dev npm start
 ```
 
-Chạy có token:
+Run with an API token:
 
 ```bash
 VB_TOKEN=my-secret npm start
-# mở: http://127.0.0.1:8787/?token=my-secret
+# open: http://127.0.0.1:8787/?token=my-secret
 ```
 
-Token được lưu vào `localStorage` và tự bỏ khỏi URL sau lần mở đầu.
+The token is stored in `localStorage` and removed from the URL after the first load.
 
-Dừng server bằng `Ctrl+C` — Chrome, relay và VPN con sẽ được đóng theo.
+Stop the server with `Ctrl+C`; child Chrome, relay, and VPN processes are closed.
 
----
+## How it works
 
-## Quy trình sử dụng
-
-1. **Tạo profile** — nhập tên, chọn OS profile (`native`, `windows`, `macos`), start URL,
+1. **Create a profile** — name, OS profile (`native`, `windows`, `macos`), start URL,
    tags/notes.
-2. **Chọn danh tính** — để trống locale/timezone nếu muốn geo tự gán; nhập nếu muốn pin.
-3. **Gán mạng** — proxy HTTP/HTTPS/SOCKS5 (kèm auth) hoặc WireGuard config, hoặc để direct.
-   Nếu có cả hai, **VPN được ưu tiên** và không chain proxy.
-4. **Lưu → Launch** — Chrome mở với user-data-dir riêng, fingerprint và mạng đã chọn.
-5. **Làm việc** — xem live view, mở/đóng/chuyển tab, nhập URL trên thanh địa chỉ.
-6. **Kiểm tra** — nút *Check IP* xác nhận IP thoát thực tế của profile.
-7. **Stop** — đóng Chrome và giải phóng relay/VPN; dữ liệu duyệt web vẫn còn cho lần sau.
+2. **Choose an identity** — leave locale/timezone empty to let geo sync fill them, or set
+   them to pin.
+3. **Attach a network** — HTTP/HTTPS/SOCKS5 proxy (with auth) or a WireGuard config, or
+   direct. If both are configured, **VPN wins** and the proxy is not chained.
+4. **Save → Launch** — Chrome starts with the profile's own `user-data-dir`, fingerprint,
+   and network path.
+5. **Work** — watch the live view, open/close/switch tabs, type a URL in the address bar.
+6. **Check IP** — confirm the profile's real exit IP and geo.
+7. **Stop** — Chrome, relay, and VPN are released; browsing data remains for the next run.
 
-> Session runtime chỉ nằm trong RAM. Restart server thì các profile hiện **Stopped**, nhưng
-> cookie/login trong `user-data/` vẫn được giữ.
+> Runtime sessions live in RAM only. Restarting the server shows profiles as **Stopped**,
+> but cookies and logins in `user-data/` are preserved.
 
----
+## Configuration
 
-## Cấu hình
+Everything is configured through environment variables; no `.env` file is required.
 
-Tất cả qua biến môi trường (không cần file `.env`):
-
-| Biến | Mặc định | Ý nghĩa |
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `VB_HOST` | `127.0.0.1` | Địa chỉ bind. Chỉ đổi thành `0.0.0.0` khi đã bật `VB_TOKEN` + firewall. |
-| `VB_PORT` | `8787` | Cổng HTTP. |
-| `VB_DATA_DIR` | `./data` | Nơi lưu `profiles.json`, user-data-dir, log VPN. |
-| `VB_TOKEN` | rỗng | Nếu đặt, mọi request `/api/*` cần header `x-vb-token`. |
-| `VB_HEADLESS` | `0` | `1` = Chrome headless (chỉ nên dùng cho test/CI). |
-| `CHROME_PATH` | tự dò | Đường dẫn Chrome/Chromium. |
-| `VB_CHROME_VERSION` | tự dò | Ghi đè version dùng cho UA/client hints. |
-| `VB_WIREPROXY` | tự dò | Đường dẫn binary `wireproxy`. |
-| `VB_START_URL` | `https://example.com/` | Start URL mặc định cho profile mới. |
-| `VB_GEO_TIMEOUT_MS` | `9000` | Timeout tra geo/IP. |
-| `VB_VPN_BOOT_TIMEOUT_MS` | `10000` | Thời gian chờ wireproxy mở cổng SOCKS5. |
-| `VB_LOG_LEVEL` | `info` | Mức log Fastify (`debug`, `warn`, `error`). |
+| `VB_HOST` | `127.0.0.1` | Bind address. Only use `0.0.0.0` with `VB_TOKEN` and a firewall. |
+| `VB_PORT` | `8787` | HTTP port. |
+| `VB_DATA_DIR` | `./data` | Stores `profiles.json`, user-data dirs, and VPN logs. |
+| `VB_TOKEN` | empty | When set, every `/api/*` request needs the `x-vb-token` header. |
+| `VB_HEADLESS` | `0` | `1` runs Chrome headless (testing/CI only). |
+| `CHROME_PATH` | auto-detected | Path to Chrome/Chromium. |
+| `VB_CHROME_VERSION` | auto-detected | Override the version used for UA/client hints. |
+| `VB_WIREPROXY` | auto-detected | Path to the `wireproxy` binary. |
+| `VB_START_URL` | `https://example.com/` | Default start URL for new profiles. |
+| `VB_GEO_TIMEOUT_MS` | `9000` | Geo/IP lookup timeout. |
+| `VB_VPN_BOOT_TIMEOUT_MS` | `10000` | Time to wait for wireproxy to open its SOCKS5 port. |
+| `VB_LOG_LEVEL` | `info` | Fastify log level (`debug`, `warn`, `error`). |
 
-Ví dụ:
+Example:
 
 ```bash
 VB_PORT=9000 VB_DATA_DIR=~/vb-data VB_TOKEN=... npm start
 ```
 
----
-
-## Dữ liệu & bảo mật
+## Data and security
 
 ```text
 data/                          # VB_DATA_DIR
-├── profiles.json              # metadata tất cả profile
+├── profiles.json              # profile metadata
 └── profiles/
     └── <uuid>/
-        └── user-data/         # Chrome user-data-dir (cookie, localStorage, cache)
+        └── user-data/         # Chrome user-data-dir (cookies, localStorage, cache)
 ```
 
-> **Cảnh báo:** `profiles.json` lưu **mật khẩu proxy dạng plain text**. Hãy bảo vệ quyền
-> đọc thư mục `data/` (`chmod 700`), không commit, không chia sẻ file này.
+> **Warning:** `profiles.json` stores **proxy passwords in plain text**. Protect the
+> permissions of `data/` (`chmod 700`), never commit it, and never share the file.
 >
-> `data/` đã nằm trong `.gitignore`. Xoá profile trong UI sẽ xoá cả `profiles/<uuid>/`.
+> `data/` is already ignored by `.gitignore`. Deleting a profile in the UI deletes its
+> `profiles/<uuid>/` directory.
 
-Khuyến nghị:
+Recommendations:
 
-- Bật `VB_TOKEN` nếu máy dùng chung hoặc có process không tin cậy.
-- Giữ `VB_HOST=127.0.0.1`; không expose ra LAN/Internet.
-- Backup `profiles.json` + `profiles/` nếu cần, nhưng nhớ chúng chứa secrets.
-- Chỉ dùng proxy/VPN và tài khoản mà bạn sở hữu hoặc được uỷ quyền.
+- Enable `VB_TOKEN` on shared machines or when other untrusted processes run locally.
+- Keep `VB_HOST=127.0.0.1`; do not expose the server to a LAN or the Internet.
+- Back up `profiles.json` + `profiles/` if needed, but treat the backup as a secret.
+- Only use proxies, VPNs, and accounts you own or are authorized to access.
 
-Chi tiết threat model: [docs/SECURITY.md](docs/SECURITY.md).
+Threat model: [docs/SECURITY.md](docs/SECURITY.md).
 
----
-
-## Kiến trúc
+## Architecture
 
 ```text
 Browser UI (public/)
-      │ fetch JSON
+      │ JSON over fetch
       ▼
 Fastify API (src/server)  ── token auth, CSRF/Host guard, security headers
       │
@@ -214,112 +241,135 @@ Fastify API (src/server)  ── token auth, CSRF/Host guard, security headers
       │
       └── runtime.ts
              ├── fingerprint.ts ── UA/client hints/locale/timezone/WebGL/screen
-             ├── relay.ts ────────► HTTP proxy local (no auth) ──► upstream có auth
-             ├── vpn.ts ──────────► wireproxy ──► SOCKS5 local
-             ├── geo.ts ──────────► ipwho.is / ipapi.co qua đúng đường ra
-             └── playwright-core ─► Chrome thật (user-data-dir riêng)
+             ├── relay.ts ────────► local HTTP proxy (no auth) ──► authenticated upstream
+             ├── vpn.ts ──────────► wireproxy ──► local SOCKS5
+             ├── geo.ts ──────────► ipwho.is / ipapi.co through the real egress path
+             └── playwright-core ─► real Chrome (isolated user-data-dir)
 ```
 
-Luồng launch:
+Launch flow:
 
-1. Chuẩn bị mạng (VPN > proxy > direct). Proxy có auth đi qua relay local để Chrome không
-   cần credential trên command line.
-2. Tra geo qua đúng đường ra; áp locale/timezone nếu chưa pin.
-3. Mở Chrome với context options + init script fingerprint.
-4. Gắn CDP override cho từng tab (client hints đầy đủ).
-5. Bật screencast cho thumbnail; trả trạng thái running + tabs.
+1. Prepare the network path (VPN > proxy > direct). Authenticated proxies go through the
+   local relay so Chrome never receives credentials on its command line.
+2. Look up geo through that same path and apply locale/timezone unless pinned.
+3. Start Chrome with the profile's context options and fingerprint init script.
+4. Apply a CDP UA override per tab for complete client hints.
+5. Start the screencast for thumbnails and return a running status with tabs.
 
-Chi tiết: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
-[docs/NETWORK.md](docs/NETWORK.md), [docs/FINGERPRINT.md](docs/FINGERPRINT.md).
-
----
+More detail: [ARCHITECTURE](docs/ARCHITECTURE.md), [NETWORK](docs/NETWORK.md),
+[FINGERPRINT](docs/FINGERPRINT.md).
 
 ## API
 
-Base URL: `http://127.0.0.1:8787`. Nếu có `VB_TOKEN`:
+Base URL: `http://127.0.0.1:8787`. If `VB_TOKEN` is set:
 
 ```bash
 curl -H "x-vb-token: $VB_TOKEN" http://127.0.0.1:8787/api/profiles
 ```
 
-| Method | Endpoint | Mô tả |
+| Method | Endpoint | Description |
 | --- | --- | --- |
 | GET | `/api/health` | Health check |
-| GET | `/api/system` | Thông tin Chrome/wireproxy/platform/data dir |
-| GET | `/api/export` | Export metadata tất cả profile |
-| GET | `/api/profiles` | Danh sách profile + runtime |
-| POST | `/api/profiles` | Tạo profile |
-| GET/PATCH/DELETE | `/api/profiles/:id` | Đọc/sửa/xoá profile |
-| POST | `/api/profiles/:id/duplicate` | Nhân bản profile |
-| GET/POST | `/api/profiles/:id/fingerprint` | Đọc/tái sinh fingerprint |
-| POST | `/api/profiles/:id/check` | Check IP thoát của profile |
-| POST | `/api/proxy/check` | Test proxy độc lập |
+| GET | `/api/system` | Chrome/wireproxy/platform/data-dir info |
+| GET | `/api/export` | Export all profile metadata |
+| GET | `/api/profiles` | List profiles with runtime status |
+| POST | `/api/profiles` | Create a profile |
+| GET/PATCH/DELETE | `/api/profiles/:id` | Read/update/delete a profile |
+| POST | `/api/profiles/:id/duplicate` | Duplicate a profile |
+| GET/POST | `/api/profiles/:id/fingerprint` | Read/regenerate the fingerprint |
+| POST | `/api/profiles/:id/check` | Check the profile's exit IP |
+| POST | `/api/proxy/check` | Test a proxy independently |
 | POST | `/api/profiles/:id/launch` | Launch Chrome |
 | POST | `/api/profiles/:id/stop` | Stop Chrome |
-| GET | `/api/profiles/:id/session` | Trạng thái + tabs + streaming |
-| GET | `/api/profiles/:id/thumbnail` | Ảnh JPEG live view |
-| POST | `/api/profiles/:id/navigate` | Điều hướng tab active |
-| POST | `/api/profiles/:id/tabs` | Mở tab mới |
-| POST | `/api/profiles/:id/tabs/:index/activate` | Chuyển tab |
-| DELETE | `/api/profiles/:id/tabs/:index` | Đóng tab |
+| GET | `/api/profiles/:id/session` | Status, tabs, streaming state |
+| GET | `/api/profiles/:id/thumbnail` | JPEG live-view frame |
+| POST | `/api/profiles/:id/navigate` | Navigate the active tab |
+| POST | `/api/profiles/:id/tabs` | Open a tab |
+| POST | `/api/profiles/:id/tabs/:index/activate` | Activate a tab |
+| DELETE | `/api/profiles/:id/tabs/:index` | Close a tab |
 
-Response dạng `{ profile }`, `{ profiles }`, `{ status }`… Chi tiết đầy đủ:
+Responses are shaped as `{ profile }`, `{ profiles }`, `{ status }`, etc. Full reference:
 [docs/API.md](docs/API.md).
 
----
-
-## Kiểm chứng
+## Verification
 
 ```bash
 npm run verify             # typecheck + proxy stack + fingerprint
-npm run verify:proxy       # HTTP/SOCKS5 auth + relay (không cần Chrome)
-npm run verify:fingerprint # mở Chrome, so fingerprint sinh ra với page thật
-npm run verify:ui http://127.0.0.1:8787   # smoke CRUD (server phải đang chạy)
-npm run verify:token                      # thông báo thiếu/sai token (server có VB_TOKEN)
+npm run verify:proxy       # HTTP/SOCKS5 auth + relay (no Chrome needed)
+npm run verify:fingerprint # launches Chrome and compares generated vs. observed values
+npm run verify:ui http://127.0.0.1:8787   # CRUD smoke test (server must be running)
+npm run verify:token                      # missing/invalid token messages (server with VB_TOKEN)
 npm run ui:shot http://127.0.0.1:8787 /tmp/vb.png
 ```
 
-`verify:ui` và `verify:token` cần server đang chạy; `verify:token` cần `VB_TOKEN`.
+`verify:ui` and `verify:token` require a running server; `verify:token` requires
+`VB_TOKEN`.
+
+## Known limitations
+
+- **Chrome only**, on the host OS. No Safari, iOS, Android, IE, or cross-browser/OS matrix.
+- **Not a malware sandbox.** Profiles isolate browser data, but share the host OS. Do not
+  open hostile links or files on your real machine.
+- Fingerprint spoofing does not yet fully cover canvas/audio/fonts/geolocation/media
+  devices; `navigator.plugins` is a stub, not a real `PluginArray`.
+- No team/RBAC/SSO or multi-machine sync yet.
+- Runtime sessions do not survive a server restart (browsing data does).
+- `wireproxy` must be installed separately; no binary is bundled.
+- No unit tests/CI yet; the verify scripts are end-to-end smoke tests.
+
+## Acceptable use
+
+**Good fit:**
+
+- QA/testing of country, language, timezone, and IP-dependent behavior.
+- REST-driven automation with clean, persistent, proxied profiles.
+- Managing multiple accounts **you own or are authorized by a client to operate**.
+- Privacy research: fingerprint comparison, IP/WebRTC leak checks.
+- Agencies managing client accounts with the client's consent.
+
+**Not allowed / not a good fit:**
+
+- Fake accounts, account farming, ban evasion, ad fraud, or spam.
+- Violating platform terms or applicable law.
+- Opening malicious links/files on a real machine (use a dedicated sandbox/VM).
+- Real cross-browser/device testing (use Browserling, Sauce Labs, BrowserStack, etc.).
+
+The project ships no proxies, VPNs, accounts, or third-party data. You are responsible for
+how you use it and for complying with the law and platform terms.
+
+## FAQ
+
+**Is this an anti-detect browser?**
+It is a profile and fingerprint manager. It keeps each profile internally consistent (UA,
+locale, timezone, screen, WebGL, exit IP) and isolates sessions. No tool can guarantee
+evasion; real detection also uses behavior, TLS, and account history.
+
+**Does it include proxies or VPNs?**
+No. Bring your own HTTP/HTTPS/SOCKS5 proxy or WireGuard config. Traffic never passes through
+a server operated by this project.
+
+**Which operating systems are supported?**
+Linux, macOS, and Windows. You need Node.js 20+ and Chrome. Headless works for CI, but
+produces a weaker fingerprint; headed mode is recommended for real work.
+
+**Can I connect Playwright or Puppeteer to a running profile?**
+Not through an external CDP endpoint today. Automation goes through the REST API (launch,
+stop, navigate, tabs, thumbnail). Exposing a CDP endpoint is on the [roadmap](docs/ROADMAP.md).
+
+**Is it free?**
+Yes, under AGPL-3.0. Commercial/dual licensing is available — see [License](#license).
+
+**Can I use it for scraping or multiple accounts?**
+Only in compliance with the target site's terms and applicable law, and only for accounts you
+own or are authorized to operate. Fraud, ban evasion, and account farming are not supported.
+
+**Does it work on a server or in Docker?**
+It runs, but realistic fingerprints need a display; headless is for testing/CI. Docker
+packaging is on the roadmap.
 
 ---
 
-## Giới hạn đã biết
-
-- **Chỉ Chrome** trên OS host. Không có Safari, iOS, Android, IE hay ma trận browser/OS.
-- **Không phải sandbox malware.** Profile Chrome cách ly dữ liệu nhưng dùng chung OS; đừng
-  mở link/file độc hại trên máy thật.
-- Fingerprint chưa spoof canvas/audio/fonts/geolocation/media devices đầy đủ; plugins là
-  object giả, chưa phải `PluginArray`.
-- Chưa có team/RBAC/SSO, chưa sync nhiều máy.
-- Session runtime không persist qua restart server (dữ liệu duyệt web thì có).
-- `wireproxy` cần cài riêng; dự án không kèm binary.
-- Chưa có test unit/CI; verify scripts là smoke test end-to-end.
-
----
-
-## Khi nào nên / không nên dùng
-
-**Phù hợp:**
-
-- QA/test website theo quốc gia, ngôn ngữ, timezone, IP.
-- Tự động hoá Playwright/Puppeteer với profile sạch, có proxy, có state.
-- Quản lý nhiều tài khoản **do bạn sở hữu hoặc được khách hàng uỷ quyền**, cần tách phiên.
-- Nghiên cứu privacy: so sánh fingerprint, kiểm tra rò rỉ IP/WebRTC.
-- Agency quản lý tài khoản client với sự đồng ý của client.
-
-**Không phù hợp / không được dùng:**
-
-- Tạo tài khoản giả, farm account, né ban, gian lận quảng cáo, spam.
-- Vi phạm điều khoản nền tảng hoặc pháp luật.
-- Mở link/file độc hại trên máy thật (hãy dùng sandbox/VM chuyên dụng).
-- Test cross-browser/device thật (dùng Browserling, Sauce Labs, BrowserStack…).
-
-Dự án không kèm proxy, VPN, tài khoản hay dữ liệu của bên thứ ba. Bạn tự chịu trách nhiệm
-về cách sử dụng và tuân thủ pháp luật/ToS.
-
----
-
-## Đóng góp
+## Contributing
 
 ```bash
 npm install
@@ -327,29 +377,26 @@ npm run dev
 npm run verify
 ```
 
-- Giữ code/API/tên biến bằng tiếng Anh; docs và UI text ưu tiên tiếng Việt.
-- Thêm test/verify case khi sửa mạng hoặc fingerprint.
-- Không commit `data/`, cookie, proxy credentials, log hay binary.
-- Mở issue trước với thay đổi lớn.
+- Keep code, APIs, and identifiers in English; user-facing text and docs are English.
+- Add a verification case when changing networking or fingerprint behavior.
+- Never commit `data/`, cookies, proxy credentials, logs, or binaries.
+- Open an issue before large changes.
 
-Quy trình chi tiết: [docs/PROCESS.md](docs/PROCESS.md).
+Workflow: [docs/PROCESS.md](docs/PROCESS.md).
 
----
-
-## Giấy phép
+## License
 
 Copyright © 2026 **dinhvanit**.
 
-Dự án phát hành theo **GNU Affero General Public License v3.0** — xem [LICENSE](LICENSE).
+Released under the **GNU Affero General Public License v3.0** (`AGPL-3.0-only`) — see
+[LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-AGPL yêu cầu: nếu bạn sửa source và cung cấp nó như một dịch vụ qua mạng, bạn phải công
-khai source của phiên bản đã sửa. Dùng thương mại/dual-licensing hoặc cần điều khoản riêng:
-mở issue tại <https://github.com/dinhvanit/virtual-browser/issues>.
+AGPL requires that if you modify the source and offer it as a network service, you must
+make the modified source available. For commercial or dual licensing, open an issue at
+<https://github.com/dinhvanit/virtual-browser/issues>.
 
----
+## Disclaimer
 
-## Miễn trừ trách nhiệm
-
-Phần mềm được cung cấp **"as is"**, không bảo hành. Tác giả không chịu trách nhiệm cho thiệt
-hại, mất dữ liệu, vi phạm điều khoản dịch vụ hoặc hành vi pháp lý phát sinh từ việc sử dụng.
-Hãy kiểm tra luật và điều khoản của nền tảng bạn dùng.
+Provided **"as is"**, without warranty. The author is not liable for damages, data loss,
+terms-of-service violations, or legal consequences arising from use. Check the law and the
+terms of any platform you use.

@@ -95,8 +95,8 @@ async function api(path, options = {}) {
       (data && data.error) || (typeof data === "string" && data) || `HTTP ${response.status}`;
     if (response.status === 401) {
       message = TOKEN
-        ? "Token không hợp lệ hoặc đã thay đổi. Mở lại dashboard bằng /?token=<VB_TOKEN>."
-        : "Máy chủ yêu cầu token. Mở dashboard bằng /?token=<VB_TOKEN> (giá trị VB_TOKEN khi khởi động).";
+        ? "Invalid token or token changed. Reopen the dashboard with /?token=<VB_TOKEN>."
+        : "The server requires a token. Open the dashboard with /?token=<VB_TOKEN> (the VB_TOKEN value used at startup).";
     }
     throw new Error(message);
   }

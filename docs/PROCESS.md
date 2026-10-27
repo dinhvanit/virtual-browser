@@ -1,23 +1,23 @@
-# Quy trình phát triển
+# Development process
 
-Tài liệu này là “runbook” cho người tiếp tục phát triển Virtual Browser. Mục tiêu: mọi
-thay đổi đều **kiểm chứng được**, **không phá dữ liệu người dùng**, và **tài liệu luôn
-khớp code**.
+This document is the runbook for anyone continuing work on Virtual Browser. The goal: every
+change is **verifiable**, **never destroys user data**, and **the docs always match
+the code**.
 
 ---
 
-## 0. Trước khi bắt đầu
+## 0. Before you start
 
-Đọc theo thứ tự:
+Read in this order:
 
-1. [README](../README.md) — tính năng, env, cách chạy.
-2. [ARCHITECTURE](ARCHITECTURE.md) — luồng launch và vòng đời session.
+1. [README](../README.md) — features, env, how to run.
+2. [ARCHITECTURE](ARCHITECTURE.md) — launch flow and session lifecycle.
 3. [NETWORK](NETWORK.md) — proxy/VPN/relay.
-4. [FINGERPRINT](FINGERPRINT.md) — những gì được spoof và giới hạn.
-5. [API](API.md) — contract HTTP.
-6. [ROADMAP](ROADMAP.md) + [DEVLOG](DEVLOG.md) — đang ở đâu, tiếp theo làm gì.
+4. [FINGERPRINT](FINGERPRINT.md) — what gets spoofed and the limitations.
+5. [API](API.md) — HTTP contract.
+6. [ROADMAP](ROADMAP.md) + [DEVLOG](DEVLOG.md) — where we are, what comes next.
 
-Nếu repo chưa có git:
+If the repo has no git yet:
 
 ```bash
 git init
@@ -27,29 +27,29 @@ git commit -m "chore: initial import"
 
 ---
 
-## 1. Chuẩn bị môi trường
+## 1. Environment setup
 
 ```bash
-node -v                 # cần >= 20, khuyến nghị 22
+node -v                 # requires >= 20, 22 recommended
 npm install
 npm run typecheck
-npm run verify:proxy    # không cần Chrome
-npm run verify:fingerprint  # cần Chrome + Internet
+npm run verify:proxy    # no Chrome needed
+npm run verify:fingerprint  # needs Chrome + Internet
 npm start               # http://127.0.0.1:8787
-# terminal khác, sau khi server chạy:
+# second terminal, after the server is running:
 npm run verify:ui http://127.0.0.1:8787
-# kiểm tra thông báo token (server phải chạy với VB_TOKEN):
-VB_TOKEN=secret npm start   # cổng riêng, ví dụ VB_PORT=8812
+# check token handling (server must run with VB_TOKEN):
+VB_TOKEN=secret npm start   # separate port, e.g. VB_PORT=8812
 npm run verify:token
 ```
 
-Khuyến nghị tạo thư mục dữ liệu riêng cho dev, tránh lẫn với dữ liệu thật:
+It is recommended to create a dedicated data directory for dev, so it does not mix with real data:
 
 ```bash
 VB_DATA_DIR=/tmp/opencode/vb-dev VB_PORT=8787 npm run dev
 ```
 
-Không có màn hình (CI/SSH):
+Headless (CI/SSH):
 
 ```bash
 VB_HEADLESS=1 VB_DATA_DIR=/tmp/opencode/vb-ci npm start
@@ -57,74 +57,74 @@ VB_HEADLESS=1 VB_DATA_DIR=/tmp/opencode/vb-ci npm start
 
 ---
 
-## 2. Vòng phát triển chuẩn
+## 2. Standard development loop
 
 ```text
-(1) Chọn việc & viết mục tiêu rõ ràng
-        │  “Thêm nút export profile”, “Sửa lỗi relay 407”, …
+(1) Pick the task & write clear goals
+        │  "Add an export profile button", "Fix relay 407", …
         ▼
-(2) Đọc code liên quan + docs
-        │  grep/đọc module, xác định contract bị ảnh hưởng
+(2) Read the relevant code + docs
+        │  grep/read modules, identify the affected contract
         ▼
-(3) Thiết kế ngắn (5–10 dòng)
-        │  input/output, file sửa, test sẽ chạy, ảnh hưởng UI/API/data
+(3) Short design (5–10 lines)
+        │  input/output, files touched, tests to run, UI/API/data impact
         ▼
-(4) Implement theo lớp: types → lib → runtime → API → UI → docs
+(4) Implement by layer: types → lib → runtime → API → UI → docs
         ▼
-(5) Verify: typecheck → verify scripts → smoke API → smoke UI
+(5) Verify: typecheck → verify scripts → API smoke → UI smoke
         ▼
-(6) Cập nhật docs + DEVLOG + CHANGELOG (nếu user-facing)
+(6) Update docs + DEVLOG + CHANGELOG (if user-facing)
         ▼
-(7) Commit/tag theo quy ước
+(7) Commit/tag following the conventions
 ```
 
-### Vì sao implement theo lớp?
+### Why implement by layer?
 
-- `types.ts` là contract. Sửa trước để TypeScript chỉ ra mọi nơi cần cập nhật.
-- `lib/*` không import server/UI → test độc lập được.
-- `runtime.ts` là nơi dễ tạo rò rỉ tài nguyên (process, socket, context). Sửa xong phải
-  kiểm tra cleanup.
-- API trước UI để có thể test bằng `curl`.
-- Docs cuối cùng, khi hành vi đã chốt.
+- `types.ts` is the contract. Change it first so TypeScript points out every place that needs updating.
+- `lib/*` does not import server/UI → it can be tested independently.
+- `runtime.ts` is where resource leaks (processes, sockets, contexts) are most likely. After changing it,
+  check cleanup.
+- API before UI so you can test with `curl`.
+- Docs last, once behavior is settled.
 
 ---
 
-## 3. Quy ước code
+## 3. Code conventions
 
-### 3.1 Chung
+### 3.1 General
 
-- TypeScript strict, ESM + NodeNext: **mọi import nội bộ phải có đuôi `.js`**
-  (ví dụ `import { getProfile } from "./store.js"`).
-- Không dùng `any` mới. Nếu buộc phải cast, thu hẹp ngay và ghi comment lý do.
-- Không thêm dependency nếu stdlib làm được. Hiện chỉ có `fastify`, `@fastify/static`,
+- TypeScript strict, ESM + NodeNext: **every internal import must end in `.js`**
+  (for example `import { getProfile } from "./store.js"`).
+- No new `any`. If a cast is unavoidable, narrow it immediately and comment why.
+- Do not add a dependency if the stdlib can do the job. Currently only `fastify`, `@fastify/static`,
   `playwright-core`; dev: `tsx`, `typescript`, `@types/node`.
-- Mọi I/O mạng phải có timeout. Không để promise treo vô hạn.
-- Mọi tài nguyên (socket, Chrome context, wireproxy, relay) phải được đóng trong
-  `try/finally` hoặc cleanup idempotent.
-- Log lỗi qua `req.log.error` trong route; log chẩn đoán ở lib bằng `console.warn` có
-  tiền tố `[module]`.
-- Không log mật khẩu proxy, token, nội dung cookie.
+- Every network I/O must have a timeout. Never leave a promise hanging forever.
+- Every resource (socket, Chrome context, wireproxy, relay) must be closed in
+  `try/finally` or through idempotent cleanup.
+- Log errors via `req.log.error` in routes; log diagnostics in lib with `console.warn` prefixed
+  with `[module]`.
+- Never log proxy passwords, tokens, or cookie contents.
 
-### 3.2 Đặt tên & cấu trúc
+### 3.2 Naming & structure
 
-| Loại | Quy ước | Ví dụ |
+| Kind | Convention | Example |
 | --- | --- | --- |
 | file | kebab-case | `geo-locale.ts`, `verify-proxy.ts` |
 | type/interface | PascalCase | `Profile`, `RuntimeStatus` |
-| hàm | camelCase, động từ | `launchProfile`, `applyGeo` |
-| hằng | UPPER_SNAKE | `GEO_TIMEOUT_MS` |
-| route | danh từ số nhiều + hành động | `POST /api/profiles/:id/launch` |
+| function | camelCase, verb | `launchProfile`, `applyGeo` |
+| constant | UPPER_SNAKE | `GEO_TIMEOUT_MS` |
+| route | plural noun + action | `POST /api/profiles/:id/launch` |
 
 ### 3.3 Error handling
 
-- Input sai → `badRequest()` trong `validate.ts` → HTTP 400.
-- Không tìm thấy → `new HttpError(404, ...)`.
-- Lỗi hệ thống (Chrome/proxy/VPN) → throw `Error` với message người đọc được; error
-  handler trả 500.
-- Message lỗi là một phần UX: nêu **cái gì** sai và **cách sửa** nếu biết
+- Bad input → `badRequest()` in `validate.ts` → HTTP 400.
+- Not found → `new HttpError(404, ...)`.
+- System errors (Chrome/proxy/VPN) → throw an `Error` with a human-readable message; the error
+  handler returns 500.
+- Error messages are part of the UX: state **what** is wrong and **how to fix it** when known
   (`wireproxy binary not found. Install it or set VB_WIREPROXY=...`).
 
-### 3.4 Commit
+### 3.4 Commits
 
 Conventional Commits:
 
@@ -136,96 +136,96 @@ refactor: split runtime tab helpers
 chore: bump version to 0.2.1
 ```
 
-Mỗi commit phải typecheck được. Không commit `data/`, `node_modules/`, `dist/`, log.
+Every commit must typecheck. Do not commit `data/`, `node_modules/`, `dist/`, or logs.
 
 ---
 
-## 4. Quy trình thêm một tính năng
+## 4. Process for adding a feature
 
-Ví dụ: “thêm trường `colorScheme` cho form tạo profile”.
+Example: "add a `colorScheme` field to the profile create form".
 
-### Bước 1 — Contract
+### Step 1 — Contract
 
-- [ ] Thêm/sửa type trong `src/types.ts`.
-- [ ] Xác định field optional hay bắt buộc; có cần migrate JSON cũ không.
+- [ ] Add/change the type in `src/types.ts`.
+- [ ] Decide whether the field is optional or required; decide whether old JSON needs migration.
 
-### Bước 2 — Logic
+### Step 2 — Logic
 
-- [ ] Sửa lib thuần (ví dụ `fingerprint.ts`).
-- [ ] Sửa `runtime.ts` nếu cần áp dụng khi launch.
-- [ ] Nếu là mạng: sửa `upstream.ts`/`relay.ts`, thêm case vào `verify-proxy.ts`.
-- [ ] Nếu là fingerprint: thêm assert vào `verify-fingerprint.ts`.
+- [ ] Change the pure lib (for example `fingerprint.ts`).
+- [ ] Change `runtime.ts` if the value must be applied at launch.
+- [ ] If it is network-related: change `upstream.ts`/`relay.ts` and add a case to `verify-proxy.ts`.
+- [ ] If it is fingerprint-related: add an assertion to `verify-fingerprint.ts`.
 
-### Bước 3 — API
+### Step 3 — API
 
-- [ ] Thêm field vào `ProfileInput` + parse trong `validate.ts`.
-- [ ] Xử lý create/patch trong `routes/profiles.ts`.
-- [ ] Trả field trong response (thường tự động qua spread).
-- [ ] Ghi endpoint/field mới vào `docs/API.md`.
+- [ ] Add the field to `ProfileInput` + parse it in `validate.ts`.
+- [ ] Handle create/patch in `routes/profiles.ts`.
+- [ ] Return the field in the response (usually automatic via spread).
+- [ ] Document the new endpoint/field in `docs/API.md`.
 
-### Bước 4 — UI
+### Step 4 — UI
 
-- [ ] Thêm input vào `public/index.html` (dùng `name=` để `collectForm` đọc được).
-- [ ] `fillForm()` set giá trị khi edit.
-- [ ] `collectForm()` validate + gửi.
-- [ ] Hiển thị trên card nếu cần (`buildCard` + `signature` nếu field ảnh hưởng card).
-- [ ] CSS nếu layout mới.
+- [ ] Add the input to `public/index.html` (use `name=` so `collectForm` can read it).
+- [ ] `fillForm()` sets the value when editing.
+- [ ] `collectForm()` validates + submits.
+- [ ] Display it on the card if needed (`buildCard` + `signature` if the field affects the card).
+- [ ] CSS if the layout is new.
 
-### Bước 5 — Verify
+### Step 5 — Verify
 
 - [ ] `npm run typecheck`
-- [ ] `npm run verify` (proxy + fingerprint) nếu chạm mạng/fingerprint
-- [ ] `npm run verify:ui <url>` (cần server đang chạy)
-- [ ] Smoke API (mục 6)
-- [ ] Smoke UI thủ công (mục 7)
+- [ ] `npm run verify` (proxy + fingerprint) if the change touches networking/fingerprint
+- [ ] `npm run verify:ui <url>` (server must be running)
+- [ ] API smoke (section 6)
+- [ ] Manual UI smoke (section 7)
 
-### Bước 6 — Docs
+### Step 6 — Docs
 
-- [ ] `docs/API.md` nếu contract đổi.
-- [ ] `docs/ARCHITECTURE.md` nếu luồng/module đổi.
-- [ ] `docs/DEVLOG.md` thêm entry ngày hôm nay.
-- [ ] `docs/CHANGELOG.md` nếu user-facing.
-- [ ] `docs/ROADMAP.md` đánh dấu xong.
+- [ ] `docs/API.md` if the contract changed.
+- [ ] `docs/ARCHITECTURE.md` if the flow/modules changed.
+- [ ] `docs/DEVLOG.md` add today's entry.
+- [ ] `docs/CHANGELOG.md` if user-facing.
+- [ ] `docs/ROADMAP.md` mark it done.
 
 ---
 
-## 5. Quy trình sửa bug
+## 5. Bug-fix process
 
-1. **Tái hiện** bằng lệnh/route nhỏ nhất. Ghi lại input, log, trạng thái.
-2. Xác định lớp lỗi: input? mạng? Chrome? UI? dữ liệu?
-3. Viết test/kiểm chứng tối thiểu:
-   - lỗi proxy → thêm case vào `scripts/verify-proxy.ts`;
-   - lỗi fingerprint → thêm assert vào `scripts/verify-fingerprint.ts`;
-   - lỗi API → thêm lệnh curl vào mục 6 hoặc test script.
-4. Sửa **nguyên nhân**, không chỉ triệu chứng.
-5. Chạy lại toàn bộ verify + smoke.
-6. Ghi DEVLOG: triệu chứng → nguyên nhân → cách sửa → cách tránh tái diễn.
+1. **Reproduce** with the smallest command/route. Record the input, logs, and state.
+2. Identify the failing layer: input? network? Chrome? UI? data?
+3. Write a minimal test/verification:
+   - proxy bug → add a case to `scripts/verify-proxy.ts`;
+   - fingerprint bug → add an assertion to `scripts/verify-fingerprint.ts`;
+   - API bug → add a curl command to section 6 or to a test script.
+4. Fix the **cause**, not just the symptom.
+5. Run the full verify + smoke suite again.
+6. Write a DEVLOG entry: symptom → cause → fix → how to prevent a regression.
 
-### Các bug đã biết cần cẩn thận
+### Known bugs to watch out for
 
-| Vùng | Cạm bẫy |
+| Area | Pitfall |
 | --- | --- |
-| Relay | Chrome có thể gửi absolute-form thay vì CONNECT; đừng chỉ xử lý CONNECT |
-| HTTP proxy auth | Chrome không gửi credential từ `--proxy-server`; phải qua relay |
-| Timeout | `readUntil`/TLS handshake có thể treo nếu không có timer |
-| Geo | Phải tra qua đúng proxy; tra direct sẽ ra IP thật và làm lệch timezone |
-| Fingerprint | UA version phải lấy từ Chrome thật, không hard-code |
-| Pin locale | Geo không được ghi đè khi `localePinned/timezonePinned` |
-| Session | `context.close()` trigger `close` event → dispose phải idempotent |
-| Tab index | Index đổi sau khi đóng tab; luôn trả list mới sau action |
-| Screencast | Frame đầu có thể đến sau screenshot fallback → tránh ghi đè frame nhỏ bằng ảnh lớn |
+| Relay | Chrome may send absolute-form instead of CONNECT; do not handle CONNECT only |
+| HTTP proxy auth | Chrome does not send credentials from `--proxy-server`; it must go through the relay |
+| Timeout | `readUntil`/the TLS handshake can hang without a timer |
+| Geo | Must query through the right proxy; a direct query returns the real IP and skews the timezone |
+| Fingerprint | The UA version must come from the real Chrome, never hard-coded |
+| Locale pinning | Geo must not override when `localePinned/timezonePinned` is set |
+| Session | `context.close()` triggers the `close` event → dispose must be idempotent |
+| Tab index | Indices change after a tab is closed; always return the new list after an action |
+| Screencast | The first frame may arrive after a fallback screenshot → avoid overwriting a small frame with a large image |
 
 ---
 
-## 6. Smoke test API (copy-paste)
+## 6. API smoke test (copy-paste)
 
-Chạy server ở terminal khác:
+Run the server in another terminal:
 
 ```bash
 VB_HEADLESS=1 VB_PORT=8799 VB_DATA_DIR=/tmp/opencode/vb-smoke npm start
 ```
 
-Trong shell test:
+In the test shell:
 
 ```bash
 B=http://127.0.0.1:8799
@@ -234,11 +234,11 @@ B=http://127.0.0.1:8799
 curl -sf $B/api/health | python3 -m json.tool
 curl -sf $B/api/system | python3 -m json.tool
 
-# 2. kiểm tra IP direct
+# 2. check the direct IP
 curl -sf -X POST $B/api/proxy/check \
   -H 'content-type: application/json' -d '{"proxy":null}' | python3 -m json.tool
 
-# 3. tạo profile
+# 3. create a profile
 curl -sf -X POST $B/api/profiles -H 'content-type: application/json' -d '{
   "name":"Smoke test",
   "tags":["demo"],
@@ -249,10 +249,10 @@ curl -sf -X POST $B/api/profiles -H 'content-type: application/json' -d '{
 ID=$(python3 -c "import json;print(json.load(open('/tmp/opencode/profile.json'))['profile']['id'])")
 echo "profile=$ID"
 
-# 4. launch (có thể mất 2–15 s vì geo lookup)
+# 4. launch (may take 2–15 s because of the geo lookup)
 time curl -sf -X POST $B/api/profiles/$ID/launch | python3 -m json.tool
 
-# 5. thumbnail phải là JPEG
+# 5. the thumbnail must be a JPEG
 curl -sf -o /tmp/opencode/thumb.jpg $B/api/profiles/$ID/thumbnail
 file /tmp/opencode/thumb.jpg
 
@@ -262,7 +262,7 @@ curl -sf -X POST $B/api/profiles/$ID/tabs \
 curl -sf -X POST $B/api/profiles/$ID/navigate \
   -H 'content-type: application/json' -d '{"url":"https://example.net"}' | python3 -m json.tool
 
-# 7. check IP của profile (lưu geo)
+# 7. check the profile IP (and store geo)
 curl -sf -X POST $B/api/profiles/$ID/check | python3 -m json.tool
 
 # 8. stop + delete
@@ -270,184 +270,184 @@ curl -sf -X POST $B/api/profiles/$ID/stop | python3 -m json.tool
 curl -sf -X DELETE $B/api/profiles/$ID | python3 -m json.tool
 ```
 
-Kiểm tra thêm:
+Also check:
 
-- `GET /api/profiles` không lộ runtime cũ sau khi stop.
-- Sau khi server restart, mọi profile phải là `stopped`.
-- `GET /api/export` tải được JSON, không chứa runtime.
+- `GET /api/profiles` does not expose stale runtime data after stop.
+- After a server restart, every profile must be `stopped`.
+- `GET /api/export` downloads JSON that contains no runtime data.
 
-### Test proxy thật
+### Testing a real proxy
 
 ```bash
-# HTTP proxy có auth
+# HTTP proxy with auth
 curl -sf -X POST $B/api/proxy/check -H 'content-type: application/json' -d '{
   "proxy":{"type":"http","host":"127.0.0.1","port":8080,"username":"u","password":"p"}
 }'
 
-# SOCKS5 có auth
+# SOCKS5 with auth
 curl -sf -X POST $B/api/proxy/check -H 'content-type: application/json' -d '{
   "proxy":{"type":"socks5","host":"127.0.0.1","port":1080,"username":"u","password":"p"}
 }'
 ```
 
-Không có proxy thật? Chạy `npm run verify:proxy` — nó tự dựng HTTP CONNECT proxy và
-SOCKS5 proxy có auth trong process, kiểm tra cả sai mật khẩu.
+No real proxy? Run `npm run verify:proxy` — it spins up an in-process HTTP CONNECT proxy and
+an authenticated SOCKS5 proxy, and also checks a wrong password.
 
 ---
 
-## 7. Smoke test UI
+## 7. UI smoke test
 
-Mở `http://127.0.0.1:8787` và kiểm tra checklist:
+Open `http://127.0.0.1:8787` and work through the checklist:
 
-- [ ] Tạo profile “native” + để trống locale/timezone → launch → card hiện geo, locale
-      theo country, thumbnail cập nhật.
-- [ ] Sửa profile: đổi tên/tags → card cập nhật, không mất dữ liệu proxy.
-- [ ] Sửa profile: pin locale `en-US`, launch với IP Thái Lan → locale vẫn `en-US`,
-      timezone theo geo (trừ khi pin cả timezone).
-- [ ] Check IP → toast có IP/country/latency; card đổi geo.
-- [ ] Launch → tab bar hiện; mở tab mới; chuyển tab; đóng tab; URL bar Enter điều hướng.
-- [ ] Stop → thumbnail dừng, badge Stopped, panel tab ẩn.
-- [ ] Duplicate → profile mới, không dùng chung user-data.
-- [ ] Regenerate fingerprint → `seed` đổi, card đổi screen/WebGL ở lần launch sau.
-- [ ] Delete → confirm; thư mục `data/profiles/<id>` biến mất.
-- [ ] Search/tag/os filter hoạt động; reload trang vẫn còn profile.
-- [ ] Nếu đặt `VB_TOKEN`: request không token trả 401; mở `/?token=...` dùng được.
-- [ ] Chrome không có → banner đỏ; wireproxy thiếu nhưng không dùng VPN → không banner.
+- [ ] Create a "native" profile + leave locale/timezone empty → launch → the card shows geo, locale
+      from the country, and the thumbnail updates.
+- [ ] Edit a profile: change name/tags → the card updates, proxy data is not lost.
+- [ ] Edit a profile: pin locale `en-US`, launch with a Thailand IP → locale stays `en-US`,
+      timezone follows geo (unless the timezone is pinned too).
+- [ ] Check IP → toast shows IP/country/latency; the card's geo changes.
+- [ ] Launch → the tab bar appears; open a new tab; switch tabs; close a tab; Enter in the URL bar navigates.
+- [ ] Stop → the thumbnail stops, the badge shows Stopped, the tab panel is hidden.
+- [ ] Duplicate → new profile, no shared user-data.
+- [ ] Regenerate fingerprint → `seed` changes, the card shows different screen/WebGL values on the next launch.
+- [ ] Delete → confirm; the `data/profiles/<id>` directory disappears.
+- [ ] Search/tag/os filters work; profiles survive a page reload.
+- [ ] If `VB_TOKEN` is set: requests without a token return 401; opening `/?token=...` works.
+- [ ] Chrome missing → red banner; wireproxy missing but VPN not used → no banner.
 
-DevTools Console không được có lỗi JS; Network không có request 500 lặp.
+The DevTools Console must have no JS errors; Network must have no repeated 500 requests.
 
 ---
 
-## 8. Debug
+## 8. Debugging
 
-### Log
+### Logging
 
 ```bash
 VB_LOG_LEVEL=debug npm start
 ```
 
-### Chrome bị lock user-data
+### Chrome has locked the user-data dir
 
-Chrome chỉ cho một process mỗi user-data-dir. Nếu server bị kill đột ngột:
+Chrome allows only one process per user-data-dir. If the server was killed abruptly:
 
 ```bash
 pgrep -af 'user-data-dir=.*data/profiles'
-# kill process còn sót, hoặc xoá SingletonLock trong user-data-dir nếu chắc chắn không chạy
+# kill the leftover process, or delete SingletonLock in the user-data-dir if you are sure it is not running
 ```
 
 ### Wireproxy
 
-- Kiểm tra config có block:
+- Check that the config has the block:
 
 ```ini
 [Socks5]
 BindAddress = 127.0.0.1:25344
 ```
 
-- Chạy tay xem log:
+- Run it by hand to see the logs:
 
 ```bash
 wireproxy -c /path/to/wg.conf
 ```
 
-- Lỗi thường gặp: thiếu `PrivateKey`, endpoint sai, `BindAddress` trùng port.
+- Common errors: missing `PrivateKey`, wrong endpoint, `BindAddress` port conflict.
 
 ### Relay/proxy
 
-- `npm run verify:proxy` trước khi nghi Chrome.
-- 407 = sai auth; 502 = không kết nối được upstream; timeout = proxy treo.
-- Relay dùng port ngẫu nhiên; log runtime trả `proxyServer` trong status.
+- Run `npm run verify:proxy` before suspecting Chrome.
+- 407 = bad auth; 502 = cannot reach upstream; timeout = the proxy is hung.
+- The relay uses a random port; the runtime log returns `proxyServer` in the status.
 
 ### Fingerprint
 
-- `npm run verify:fingerprint` phải in `OK`.
-- Nếu Chrome update: xoá cache version bằng cách restart server (version dò lúc đầu),
-  chạy lại verify.
-- So sánh `navigator.userAgentData.getHighEntropyValues()` trong page với fingerprint.
+- `npm run verify:fingerprint` must print `OK`.
+- If Chrome updates: clear the cached version by restarting the server (the version is detected at startup),
+  then run verify again.
+- Compare `navigator.userAgentData.getHighEntropyValues()` in the page with the fingerprint.
 
 ### Geo
 
-- Provider có thể rate-limit. `geoError` sẽ hiện; chạy Check IP lại.
-- Nếu IP là datacenter, country vẫn đúng nhưng city có thể là “Ashburn”… — bình thường.
+- The provider may rate-limit. `geoError` will show; run Check IP again.
+- If the IP is a datacenter IP, the country is still correct but the city may be "Ashburn"… — that is normal.
 
 ---
 
-## 9. Migration dữ liệu
+## 9. Data migration
 
-Khi đổi schema `profiles.json`:
+When the `profiles.json` schema changes:
 
-1. Tăng `DB.version` trong `src/store.ts`.
-2. Viết hàm `migrate(db)` thuần, không side effect:
-   - thêm default field;
-   - đổi tên field cũ;
-   - bỏ field không dùng;
-   - giữ nguyên id/userDataDir.
-3. Gọi trong `initStore()` sau khi parse, trước khi gán `db`.
-4. Ghi file migrated ngay (một lần), hoặc ghi khi save kế tiếp — nhưng phải nhất quán.
-5. Test: copy một file JSON phiên bản cũ vào `VB_DATA_DIR`, khởi động, kiểm tra không mất
-   profile.
-6. Ghi vào CHANGELOG + PROCESS (mục này) nếu có bước thủ công.
+1. Bump `DB.version` in `src/store.ts`.
+2. Write a pure `migrate(db)` function with no side effects:
+   - add default fields;
+   - rename old fields;
+   - drop unused fields;
+   - keep id/userDataDir unchanged.
+3. Call it in `initStore()` after parsing, before assigning `db`.
+4. Write the migrated file immediately (once), or write it on the next save — but be consistent.
+5. Test: copy an old-version JSON file into `VB_DATA_DIR`, start the server, and check that no
+   profile is lost.
+6. Record it in CHANGELOG + PROCESS (this section) if there is a manual step.
 
-Nguyên tắc: **không bao giờ xoá user-data-dir** trong migrate.
+Principle: **never delete the user-data-dir** during migration.
 
 ---
 
 ## 10. Release checklist
 
-- [ ] `package.json` + `src/config.ts` cùng version.
+- [ ] `package.json` + `src/config.ts` share the same version.
 - [ ] `npm run typecheck`
 - [ ] `npm run verify:proxy`
-- [ ] `npm run verify:fingerprint` (nếu có Chrome)
-- [ ] `npm run verify:ui` trên server vừa khởi động
-- [ ] `npm run verify:token` trên server có `VB_TOKEN` (cổng riêng)
-- [ ] Smoke API mục 6 trên `VB_DATA_DIR` sạch.
-- [ ] Smoke UI mục 7.
-- [ ] `docs/CHANGELOG.md` có mục version + ngày.
-- [ ] `docs/DEVLOG.md` ghi việc đã làm.
-- [ ] `docs/API.md` khớp route thực tế (`grep "app\.\(get\|post\|patch\|delete\)" src/server/routes`).
-- [ ] README env table khớp `src/config.ts`.
-- [ ] Không có file `data/`, log, `.env` trong commit.
+- [ ] `npm run verify:fingerprint` (if Chrome is available)
+- [ ] `npm run verify:ui` against a freshly started server
+- [ ] `npm run verify:token` against a server with `VB_TOKEN` (separate port)
+- [ ] API smoke from section 6 on a clean `VB_DATA_DIR`.
+- [ ] UI smoke from section 7.
+- [ ] `docs/CHANGELOG.md` has the version + date entry.
+- [ ] `docs/DEVLOG.md` records the work done.
+- [ ] `docs/API.md` matches the actual routes (`grep "app\.\(get\|post\|patch\|delete\)" src/server/routes`).
+- [ ] The README env table matches `src/config.ts`.
+- [ ] No `data/`, log, or `.env` files in the commit.
 - [ ] Tag: `git tag v0.2.0 && git push --tags`.
 
 ---
 
 ## 11. Definition of Done
 
-Một task chỉ “xong” khi:
+A task is only "done" when:
 
-1. Hành vi đúng yêu cầu, có error message rõ.
-2. `npm run typecheck` sạch.
-3. Verify liên quan chạy qua.
-4. Smoke API/UI tương ứng đã chạy (ưu tiên script `verify:ui` cho luồng CRUD).
-5. Không rò rỉ tài nguyên sau stop/delete/restart (kiểm tra process Chrome, wireproxy,
-   port relay).
-6. Docs + DEVLOG cập nhật.
-7. Không phá dữ liệu cũ (hoặc có migration + ghi chú).
+1. The behavior matches the requirement and has clear error messages.
+2. `npm run typecheck` is clean.
+3. The related verify scripts pass.
+4. The corresponding API/UI smoke has been run (prefer the `verify:ui` script for CRUD flows).
+5. No resources leak after stop/delete/restart (check Chrome processes, wireproxy,
+   relay ports).
+6. Docs + DEVLOG are updated.
+7. Old data is not broken (or a migration + note exists).
 
 ---
 
-## 12. Backup & khôi phục
+## 12. Backup & restore
 
 Backup:
 
 ```bash
-# Dừng server trước để JSON không đổi giữa chừng
+# Stop the server first so the JSON does not change mid-copy
 tar -czf vb-backup-$(date +%F).tar.gz data/
 ```
 
-Khôi phục:
+Restore:
 
 ```bash
 tar -xzf vb-backup-YYYY-MM-DD.tar.gz
-# đảm bảo quyền đọc/ghi cho user chạy server
+# make sure the user running the server has read/write permissions
 ```
 
-Export metadata (không kèm cookie):
+Export metadata (without cookies):
 
 ```bash
 curl -sf http://127.0.0.1:8787/api/export -o vb-export.json
 ```
 
-Hiện **chưa có import**. Nếu cần khôi phục metadata, dừng server rồi merge thủ công vào
-`data/profiles.json` (giữ `id`, đảm bảo `userDataDir` đúng). Tính năng import nằm trong
+There is currently **no import**. To restore metadata, stop the server and merge manually into
+`data/profiles.json` (keep `id`, make sure `userDataDir` is correct). The import feature is on the
 [ROADMAP](ROADMAP.md).

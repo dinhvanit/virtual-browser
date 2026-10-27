@@ -1,134 +1,138 @@
-# Bảo mật & threat model
+# Security & threat model
 
-Virtual Browser là công cụ **local, single-user**. Tài liệu này nói rõ nó bảo vệ cái gì,
-không bảo vệ cái gì, và cách hardening.
+Virtual Browser is a **local, single-user** tool. This document states what it protects,
+what it does not protect, and how to harden it.
 
 ---
 
 ## 1. Threat model
 
-| Thành phần | Tin cậy? | Giả định |
+| Component | Trusted? | Assumption |
 | --- | --- | --- |
-| Người dùng đang đăng nhập OS | ✅ | được phép điều khiển browser và đọc `data/` |
-| Process khác cùng user | ⚠️ | có thể đọc file, dùng relay loopback; không chống được |
-| Website độc hại user mở | ❌ | không được phép gọi API ghi |
-| Máy khác trong LAN | ❌ | mặc định không truy cập được (bind 127.0.0.1) |
-| Proxy/VPN provider | ❌ | thấy traffic/metadata theo bản chất |
-| Internet | ❌ | không tin IP geo provider |
+| OS user currently logged in | ✅ | allowed to control the browser and read `data/` |
+| Other processes under the same user | ⚠️ | can read files and use the loopback relay; not defended against |
+| Malicious website opened by the user | ❌ | not allowed to call write APIs |
+| Other machines on the LAN | ❌ | unreachable by default (bind 127.0.0.1) |
+| Proxy/VPN provider | ❌ | sees traffic and metadata by nature |
+| Internet | ❌ | does not trust the IP geo provider |
 
-**Ngoài phạm vi**: chống malware/kernel-level, chống forensic đọc ổ đĩa, multi-tenant,
-chống người dùng có quyền root.
+**Out of scope**: defending against malware or kernel-level attacks, forensic disk reads,
+multi-tenancy, and users with root privileges.
 
 ---
 
-## 2. Tài sản
+## 2. Assets
 
-| Tài sản | Nơi lưu | Mức nhạy cảm |
+| Asset | Location | Sensitivity |
 | --- | --- | --- |
-| Cookie/session đăng nhập | `data/profiles/<id>/user-data/` | 🔴 cao |
-| Mật khẩu proxy | `data/profiles.json` (plain text) | 🔴 cao |
-| WireGuard private key | file `.conf` ngoài repo | 🔴 cao |
-| Token API (`VB_TOKEN`) | env + localStorage trình duyệt | 🟠 trung bình |
-| Metadata profile | `profiles.json` | 🟡 thấp–trung bình |
-| Ảnh thumbnail | RAM, không lưu đĩa | 🟠 (có thể chứa nội dung nhạy cảm) |
-| Log wireproxy | RAM (100 dòng/profile) | 🟡 |
+| Login cookies/session | `data/profiles/<id>/user-data/` | 🔴 high |
+| Proxy password | `data/profiles.json` (plain text) | 🔴 high |
+| WireGuard private key | `.conf` file outside the repo | 🔴 high |
+| API token (`VB_TOKEN`) | env + browser localStorage | 🟠 medium |
+| Profile metadata | `profiles.json` | 🟡 low–medium |
+| Thumbnail images | RAM, never written to disk | 🟠 (may contain sensitive content) |
+| wireproxy logs | RAM (100 lines per profile) | 🟡 |
 
 ---
 
-## 3. Kiểm soát đang có
+## 3. Existing controls
 
-### 3.1 Mạng
+### 3.1 Network
 
-- Bind mặc định `127.0.0.1` — không lộ ra LAN.
-- Relay local bind loopback, port ngẫu nhiên, đóng khi stop.
-- Chrome không nhận credential proxy qua command line (tránh lộ `ps`); credential nằm
-  trong RAM của server.
-- `connectUpstream` luôn timeout và destroy socket khi lỗi.
-- Không bật `ignoreHTTPSErrors` — certificate sai vẫn bị chặn.
-- `disable_non_proxied_udp` khi có proxy (giảm WebRTC leak).
+- Default bind `127.0.0.1` — not exposed to the LAN.
+- Local relay binds to loopback on a random port and is closed on stop.
+- Chrome never receives proxy credentials via command line (avoids leaking them through
+  `ps`); credentials stay in the server's RAM.
+- `connectUpstream` always times out and destroys the socket on error.
+- `ignoreHTTPSErrors` is not enabled — invalid certificates are still blocked.
+- `disable_non_proxied_udp` when a proxy is configured (reduces WebRTC leaks).
 
 ### 3.2 API
 
-- Chỉ phục vụ JSON + static files, không có endpoint eval JS / chạy shell.
-- Validate chặt: UUID, port range, URL scheme, BCP-47, IANA timezone, proxy type, tag
+- Serves JSON + static files only; there is no endpoint to eval JS or run shell commands.
+- Strict validation: UUID, port range, URL scheme, BCP-47, IANA timezone, proxy type, tag
   length, control characters.
-- `removeProfile` chỉ xoá thư mục nằm trong `PROFILES_DIR` (chặn path traversal).
-- `VB_TOKEN` (tuỳ chọn): mọi `/api/*` yêu cầu `x-vb-token`, so sánh constant-time.
-- **CSRF guard**: request ghi phải same-origin qua `Origin` hoặc `Sec-Fetch-Site`; request
-  cross-site bị 403. Curl/API client không gửi hai header này vẫn dùng được.
-- **DNS rebinding guard**: khi bind loopback, `Host` của request `/api/*` chỉ được là
-  `127.0.0.1`, `localhost` hoặc `::1`; domain khác resolve về loopback bị 403.
+- `removeProfile` only deletes directories inside `PROFILES_DIR` (blocks path traversal).
+- `VB_TOKEN` (optional): every `/api/*` request requires `x-vb-token`, compared in
+  constant time.
+- **CSRF guard**: write requests must be same-origin via `Origin` or `Sec-Fetch-Site`;
+  cross-site requests get 403. Curl/API clients that send neither header still work.
+- **DNS rebinding guard**: when bound to loopback, the `Host` header of `/api/*` requests
+  may only be `127.0.0.1`, `localhost`, or `::1`; any other domain resolving to loopback
+  gets 403.
 - Security headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
   `Referrer-Policy: no-referrer`.
-- UI lưu token trong `localStorage`; token trên URL được xoá khỏi address bar ngay sau khi
-  đọc (`history.replaceState`).
+- The UI stores the token in `localStorage`; a token passed in the URL is removed from the
+  address bar immediately after it is read (`history.replaceState`).
 
-### 3.3 Dữ liệu
+### 3.3 Data
 
-- `.gitignore` chặn `data/`, `node_modules/`, `dist/`, log.
-- Ghi JSON atomic (tmp + rename) — không hỏng file khi crash.
-- Không telemetry, không gọi dịch vụ ngoài trừ geo provider.
-- Ảnh screencast chỉ nằm RAM, không ghi đĩa.
+- `.gitignore` excludes `data/`, `node_modules/`, `dist/`, and logs.
+- Atomic JSON writes (tmp + rename) — no file corruption on crash.
+- No telemetry, and no calls to external services except the geo provider.
+- Screencast frames stay in RAM only and are never written to disk.
 
 ---
 
-## 4. Rủi ro còn lại
+## 4. Remaining risks
 
-| Rủi ro | Chi tiết | Giảm thiểu |
+| Risk | Detail | Mitigation |
 | --- | --- | --- |
-| Mật khẩu proxy plain text | đọc được nếu lộ file/backup | `chmod 700 data`, `chmod 600 data/profiles.json`, mã hoá ổ đĩa, không backup lên cloud công khai |
-| Relay không auth | process cùng user dùng được khi profile chạy | chấp nhận local; không bind LAN; stop profile khi không dùng |
-| API không auth mặc định | website có thể thử gọi, nhưng CSRF guard chặn ghi; GET không đọc được do CORS | bật `VB_TOKEN` nếu máy có nhiều user/process lạ |
-| Token trong localStorage | XSS trên chính UI (không có input render HTML thô?) | UI escape mọi field; CSP chưa bật; giữ code UI đơn giản |
-| Thumbnail nhạy cảm | bất kỳ ai chụp màn hình thấy dashboard | khoá máy, không share |
-| WireGuard key | file config ngoài repo | quyền 600, không commit |
-| Geo provider thấy IP | bản chất lookup | dùng provider tin cậy; có thể tự host |
-| Chrome 0-day | bản chất duyệt web | update Chrome |
-| Fingerprint không hoàn hảo | xem FINGERPRINT §6 | warm-up, một profile một account |
+| Plain-text proxy password | readable if the file or a backup leaks | `chmod 700 data`, `chmod 600 data/profiles.json`, disk encryption, no backups to public cloud storage |
+| Relay has no auth | processes under the same user can use it while a profile is running | accepted for local use; do not bind to the LAN; stop profiles when not in use |
+| API unauthenticated by default | websites can attempt calls, but the CSRF guard blocks writes; responses to GET cannot be read due to CORS | enable `VB_TOKEN` if the machine has multiple users or untrusted processes |
+| Token in localStorage | XSS on the UI itself (does any input render raw HTML? no) | the UI escapes every field; CSP is not enabled; keep the UI code simple |
+| Sensitive thumbnails | anyone who sees the dashboard screen | lock the machine, do not share |
+| WireGuard key | config file outside the repo | 600 permissions, never commit |
+| Geo provider sees the IP | inherent to the lookup | use a trusted provider; self-hosting is possible |
+| Chrome 0-day | inherent to browsing the web | update Chrome |
+| Fingerprint is not perfect | see FINGERPRINT §6 | warm-up, one account per profile |
 
-### Về CSRF
+### On CSRF
 
-Trình duyệt hiện đại gửi `Origin` cho mọi POST (kể cả form cross-site). Guard hiện tại chặn
-trường hợp phổ biến. Nếu phát hiện bypass, bật `VB_TOKEN` — khi đó mọi request thiếu token
-bị 401 trước cả CSRF check.
+Modern browsers send `Origin` on every POST (including cross-site forms). The current guard
+blocks the common case. If you find a bypass, enable `VB_TOKEN` — every request without a
+token then gets 401 before the CSRF check even runs.
 
-### Về token trên URL
+### On the token in the URL
 
-`/?token=...` tiện cho lần đầu nhưng token có thể nằm trong history trước khi bị xoá. Với
-môi trường nhạy cảm, đặt token qua header bằng API client, hoặc mở UI rồi set
-`localStorage.vb_token` trong DevTools.
+`/?token=...` is convenient for first use, but the token may remain in history before it is
+removed. For sensitive environments, send the token through a header using an API client,
+or open the UI and then set `localStorage.vb_token` in DevTools.
 
 ---
 
 ## 5. Hardening checklist
 
-- [ ] `data/` quyền `700`, `profiles.json` quyền `600`.
-- [ ] Full-disk encryption bật.
-- [ ] `VB_TOKEN` đặt nếu máy dùng chung hoặc có process không tin cậy.
-- [ ] Không đổi `VB_HOST` sang `0.0.0.0` trừ khi có reverse proxy + auth + firewall.
-- [ ] Chrome update định kỳ; restart server sau update.
-- [ ] Không commit `data/`, `.conf`, `.env`.
-- [ ] Backup mã hoá; không upload backup lên dịch vụ công khai.
-- [ ] Xoá profile cũ không dùng (xoá cả cookie + metadata).
-- [ ] Kiểm tra `browserleaks.com/webrtc` sau khi đổi proxy/VPN.
-- [ ] Rotate proxy password/WireGuard key định kỳ và khi nghi lộ.
+- [ ] `data/` permissions `700`, `profiles.json` permissions `600`.
+- [ ] Full-disk encryption enabled.
+- [ ] `VB_TOKEN` set if the machine is shared or runs untrusted processes.
+- [ ] Do not change `VB_HOST` to `0.0.0.0` unless a reverse proxy + auth + firewall are in place.
+- [ ] Update Chrome regularly; restart the server after updating.
+- [ ] Do not commit `data/`, `.conf`, or `.env`.
+- [ ] Encrypted backups; never upload backups to public services.
+- [ ] Delete old, unused profiles (removes both cookies and metadata).
+- [ ] Check `browserleaks.com/webrtc` after changing proxy/VPN.
+- [ ] Rotate the proxy password/WireGuard key regularly and whenever exposure is suspected.
 
 ---
 
-## 6. Khi nghi lộ dữ liệu
+## 6. If you suspect data exposure
 
-1. **Dừng server** (Ctrl+C) — đóng Chrome/relay/VPN.
-2. **Rotate** mật khẩu proxy và WireGuard key với provider.
-3. **Xoá** profile liên quan trong UI (xoá user-data) hoặc xoá `data/profiles/<id>`.
-4. Kiểm tra `profiles.json` còn entry lạ không.
-5. Nếu token API lộ: đổi `VB_TOKEN`, restart; xoá `localStorage.vb_token` trên trình duyệt.
-   Dashboard sẽ báo token không hợp lệ — mở lại bằng `/?token=<VB_TOKEN_mới>`.
-6. Rà log shell/history xem có lệnh lạ.
-7. Nếu nghi malware: không chỉ xoá profile — cài lại máy/ổ đĩa.
+1. **Stop the server** (Ctrl+C) — closes Chrome/relay/VPN.
+2. **Rotate** the proxy password and WireGuard key with the provider.
+3. **Delete** the affected profile in the UI (removes user-data), or delete `data/profiles/<id>`.
+4. Check `profiles.json` for unexpected entries.
+5. If the API token leaked: change `VB_TOKEN` and restart; clear `localStorage.vb_token` in
+   the browser. The dashboard will report an invalid token — reopen with `/?token=<new_VB_TOKEN>`.
+6. Review shell/history logs for unexpected commands.
+7. If you suspect malware: do not just delete the profile — reinstall the machine/disk.
 
 ---
 
-## 7. Báo cáo lỗ hổng
+## 7. Reporting vulnerabilities
 
-Đây là dự án cá nhân, không có bounty. Nếu tìm thấy lỗi bảo mật, mở issue **không kèm**
-credential/cookie/IP thật, hoặc liên hệ trực tiếp chủ repo.
+Please use GitHub's private vulnerability reporting:
+<https://github.com/dinhvanit/virtual-browser/security/advisories/new>. Do **not** include
+real credentials, cookies, or IPs in a public issue. See the root
+[SECURITY.md](../SECURITY.md) for scope, response times, and safe harbor.

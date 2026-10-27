@@ -33,7 +33,7 @@ try {
   await page.reload({ waitUntil: "networkidle" });
   const badToken = await firstErrorToast(page);
   console.log("bad token :", badToken);
-  if (!badToken.includes("không hợp lệ")) throw new Error("missing invalid-token hint");
+  if (!badToken.includes("Invalid token")) throw new Error("missing invalid-token hint");
 
   // 3. Correct token via ?token= -> dashboard loads, token stripped from URL.
   const good = await browser.newPage();
