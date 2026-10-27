@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Virtual Browser</title>
+    <meta
+      name="description"
+      content="Local antidetect browser manager: isolated profiles, per-profile proxy/VPN, coherent fingerprint."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f8cff'/%3E%3Ctext x='32' y='42' font-family='Arial' font-size='26' font-weight='bold' fill='white' text-anchor='middle'%3EVB%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">VB</span>
+        <div>
+          <h1>Virtual Browser</h1>
+          <p>Local antidetect profiles</p>
+        </div>
+      </div>
+
+      <div class="stats">
+        <span class="stat"><strong id="stat-total">0</strong> profiles</span>
+        <span class="stat"><span class="dot off" id="stat-dot"></span><strong id="stat-running">0</strong> running</span>
+        <span class="stat" id="chip-chrome"><span class="dot"></span> Chrome</span>
+        <span class="stat" id="chip-wireproxy"><span class="dot off"></span> wireproxy</span>
+        <span class="stat hidden" id="chip-headless">headless</span>
+      </div>
+
+      <div class="top-actions">
+        <button class="btn ghost" id="refresh-btn" title="Reload profiles">↻ Refresh</button>
+        <button class="btn primary" id="new-profile-btn">+ New profile</button>
+      </div>
+    </header>
+
+    <div id="banner" class="banner hidden"></div>
+
+    <main>
+      <div class="toolbar">
+        <div class="search-wrap">
+          <span>⌕</span>
+          <input id="search" type="search" placeholder="Search name, tag, IP, country…" autocomplete="off" />
+        </div>
+        <select id="filter-state" class="filter">
+          <option value="all">All states</option>
+          <option value="running">Running</option>
+          <option value="stopped">Stopped</option>
+        </select>
+        <select id="filter-os" class="filter">
+          <option value="all">All platforms</option>
+          <option value="native">Native</option>
+          <option value="windows">Windows</option>
+          <option value="macos">macOS</option>
+        </select>
+        <span class="toolbar-note" id="visible-count"></span>
+      </div>
+
+      <div class="grid" id="grid"></div>
+
+      <div class="empty hidden" id="empty">
+        <div class="glyph">◐</div>
+        <h2>No profiles yet</h2>
+        <p>
+          A profile is an isolated Chrome user-data dir with its own cookies, proxy/VPN exit and a
+          fingerprint derived from the exit IP. Create one to get started.
+        </p>
+        <button class="btn primary" id="empty-create">+ Create your first profile</button>
+      </div>
+    </main>
+
+    <footer>
+      <span>Virtual Browser <b id="foot-version">v0.2.0</b></span>
+      <span>data <b id="foot-data">./data</b></span>
+      <span id="foot-platform"></span>
+      <span id="foot-headless"></span>
+      <span class="hidden" id="foot-token"></span>
+    </footer>
+
+    <!-- ------------------------------------------------------------------ -->
+    <!-- Create / edit modal                                                 -->
+    <!-- ------------------------------------------------------------------ -->
+    <div class="modal hidden" id="profile-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <form class="modal-card" id="profile-form" novalidate>
+        <div class="modal-head">
+          <div>
+            <h2 id="modal-title">New profile</h2>
+            <p id="modal-subtitle">Each profile gets an isolated Chrome profile and fingerprint.</p>
+          </div>
+          <button type="button" class="close" data-close-modal aria-label="Close">×</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="form-grid">
+            <label class="field full">
+              Name
+              <input name="name" maxlength="80" required placeholder="e.g. Shopee seller — US" />
+            </label>
+
+            <label class="field">
+              Tags
+              <span class="hint">Comma separated, e.g. amazon, us</span>
+              <input name="tags" maxlength="400" placeholder="amazon, us" />
+            </label>
+
+            <label class="field">
+              OS profile
+              <span class="hint">Foreign OS values are spoofed in JS + client hints.</span>
+              <select name="osProfile">
+                <option value="native">Native (Linux on this host)</option>
+                <option value="windows">Windows 10 / 11</option>
+                <option value="macos">macOS</option>
+              </select>
+            </label>
+
+            <label class="field full">
+              Start URL
+              <input name="startUrl" maxlength="2048" placeholder="https://example.com/" />
+            </label>
+
+            <label class="field">
+              Locale
+              <span class="hint">Leave empty to derive from exit IP.</span>
+              <input name="locale" maxlength="35" placeholder="auto — e.g. en-US" />
+            </label>
+
+            <label class="field">
+              Timezone
+              <span class="hint">Leave empty to use the exit-IP timezone.</span>
+              <input name="timezone" maxlength="64" placeholder="auto — America/New_York" />
+            </label>
+
+            <fieldset class="section">
+              <legend>
+                Proxy
+                <span class="mini">HTTP, HTTPS or SOCKS5 — authenticated proxies supported</span>
+              </legend>
+              <label class="switch">
+                <input type="checkbox" name="proxyEnabled" id="proxy-enabled" />
+                Route this profile through a proxy
+              </label>
+              <div class="subgrid" id="proxy-fields">
+                <label class="field">
+                  Type
+                  <select name="proxyType">
+                    <option value="http">HTTP</option>
+                    <option value="https">HTTPS</option>
+                    <option value="socks5">SOCKS5</option>
+                  </select>
+                </label>
+                <label class="field">
+                  Host
+                  <input name="proxyHost" maxlength="255" placeholder="proxy.example.com" />
+                </label>
+                <label class="field">
+                  Port
+                  <input name="proxyPort" type="number" min="1" max="65535" placeholder="8080" />
+                </label>
+                <label class="field">
+                  Username
+                  <input name="proxyUser" maxlength="255" autocomplete="off" placeholder="optional" />
+                </label>
+                <label class="field">
+                  Password
+                  <input name="proxyPass" type="password" maxlength="512" autocomplete="new-password" placeholder="optional" />
+                </label>
+                <label class="field">
+                  Label
+                  <input name="proxyLabel" maxlength="64" placeholder="provider / plan" />
+                </label>
+              </div>
+              <div class="test-row">
+                <button type="button" class="btn small" id="test-proxy-btn">Test proxy / IP</button>
+                <span class="test-result" id="test-result"></span>
+              </div>
+            </fieldset>
+
+            <fieldset class="section">
+              <legend>
+                WireGuard VPN
+                <span class="mini">via wireproxy · takes precedence over the proxy above</span>
+              </legend>
+              <label class="switch">
+                <input type="checkbox" name="vpnEnabled" id="vpn-enabled" />
+                Use a WireGuard config for this profile
+              </label>
+              <div class="subgrid two" id="vpn-fields">
+                <label class="field full">
+                  wireproxy config path
+                  <input name="vpnPath" maxlength="4096" placeholder="/home/me/wg/us-ny.conf" />
+                  <span class="hint">Must contain a [Socks5] BindAddress, e.g. 127.0.0.1:25344.</span>
+                </label>
+              </div>
+            </fieldset>
+
+            <label class="field full">
+              Notes
+              <textarea name="notes" maxlength="8000" placeholder="Account, warm-up plan, 2FA owner…"></textarea>
+            </label>
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <span class="test-result" id="save-hint"></span>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" data-close-modal>Cancel</button>
+          <button type="submit" class="btn primary" id="save-profile-btn">Create profile</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ------------------------------------------------------------------ -->
+    <!-- Confirm modal                                                       -->
+    <!-- ------------------------------------------------------------------ -->
+    <div class="modal hidden" id="confirm-modal" role="dialog" aria-modal="true">
+      <div class="modal-card confirm-card">
+        <div class="modal-head">
+          <div>
+            <h2 id="confirm-title">Are you sure?</h2>
+            <p>This action cannot be undone.</p>
+          </div>
+        </div>
+        <div class="modal-body">
+          <p id="confirm-message"></p>
+        </div>
+        <div class="modal-foot">
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" id="confirm-cancel">Cancel</button>
+          <button type="button" class="btn danger" id="confirm-ok">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toasts" id="toasts"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

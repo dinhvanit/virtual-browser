@@ -1,0 +1,56 @@
+{
+  "name": "virtual-browser",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Local-first Chrome profile manager: isolated profiles, per-profile proxy/VPN, coherent fingerprints and a REST API.",
+  "author": "dinhvanit",
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/dinhvanit/virtual-browser#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dinhvanit/virtual-browser.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dinhvanit/virtual-browser/issues"
+  },
+  "keywords": [
+    "browser",
+    "chrome",
+    "profiles",
+    "antidetect",
+    "fingerprint",
+    "proxy",
+    "socks5",
+    "wireguard",
+    "playwright",
+    "automation",
+    "qa",
+    "self-hosted"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server/index.ts",
+    "start": "tsx src/server/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify:fingerprint": "tsx scripts/verify-fingerprint.ts",
+    "verify:proxy": "tsx scripts/verify-proxy.ts",
+    "verify": "npm run typecheck && npm run verify:proxy && npm run verify:fingerprint",
+    "verify:ui": "tsx scripts/verify-ui.ts",
+    "verify:token": "tsx scripts/verify-token-ui.ts",
+    "ui:shot": "tsx scripts/screenshot-ui.ts"
+  },
+  "dependencies": {
+    "@fastify/static": "^8.0.4",
+    "fastify": "^5.2.1",
+    "playwright-core": "^1.49.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
