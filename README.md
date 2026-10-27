@@ -9,11 +9,11 @@
 automation.** Each profile is an isolated identity with its own proxy/VPN, its own
 `user-data-dir`, and a coherent fingerprint.
 
-> **Status:** `v0.2.0` — beta, designed for a personal machine and bound to `127.0.0.1`.
+> **Status:** `v0.3.0` — beta, designed for a personal machine and bound to `127.0.0.1`.
 > Not intended to be exposed to the Internet. Read [SECURITY](docs/SECURITY.md) before
 > changing `VB_HOST`.
 
-![Dashboard: live view, tabs, fingerprint and geo](docs/dashboard.png)
+![Dashboard: live view, tabs, fingerprints, geo and data tools](docs/dashboard.png)
 
 _Dashboard: live CDP screencast, tab/URL bar, fingerprint facts, and the profile's exit IP._
 
@@ -78,7 +78,8 @@ control the fingerprint, the network path, and the data.
 
 | Area | What you get |
 | --- | --- |
-| **Profiles** | create/edit/delete/duplicate, tags, notes, start URL, isolated `user-data-dir`, JSON export |
+| **Profiles** | create/edit/delete/duplicate, tags, notes, start URL, isolated `user-data-dir` |
+| **Data safety** | JSON profile import/export, full `.tar.gz` backup/restore, path/size validation, additive restores (never overwrite) |
 | **Network** | HTTP/HTTPS/SOCKS5 proxies **with auth**, WireGuard via `wireproxy`, or direct |
 | **Local relay** | credential-free proxy endpoint for Chrome; handles CONNECT and absolute-form HTTP |
 | **Fingerprint** | real Chrome UA + client hints, platform, locale, timezone, screen, DPR, WebGL, `hardwareConcurrency`, `deviceMemory`, color scheme, plugins, `navigator.webdriver` |
@@ -197,6 +198,9 @@ Everything is configured through environment variables; no `.env` file is requir
 | `VB_GEO_TIMEOUT_MS` | `9000` | Geo/IP lookup timeout. |
 | `VB_VPN_BOOT_TIMEOUT_MS` | `10000` | Time to wait for wireproxy to open its SOCKS5 port. |
 | `VB_LOG_LEVEL` | `info` | Fastify log level (`debug`, `warn`, `error`). |
+| `VB_MAX_IMPORT_MB` | `16` | Maximum JSON import body size. |
+| `VB_MAX_BACKUP_MB` | `2048` | Maximum compressed backup/restore size (also caps browser downloads). |
+| `VB_MAX_BACKUP_ENTRIES` | `200000` | Maximum entries in a restore archive (zip-bomb guard). |
 
 Example:
 
@@ -228,6 +232,25 @@ Recommendations:
 - Only use proxies, VPNs, and accounts you own or are authorized to access.
 
 Threat model: [docs/SECURITY.md](docs/SECURITY.md).
+
+### Backup and restore
+
+Use **Data** in the dashboard:
+
+- **Export profiles (.json)** — metadata only: names, tags, proxy/VPN settings,
+  fingerprints. No cookies, local storage or cache.
+- **Backup all data (.tar.gz)** — `profiles.json` plus every `user-data/` tree. Stop all
+  profiles first; the API returns `409` otherwise. **WireGuard `.conf` files are not
+  included** because they normally live outside `data/`; back them up separately.
+- **Import / restore** — always **additive**. Every imported profile gets a new id and its
+  own data directory; existing profiles are never overwritten. Fingerprints and the
+  original seed are preserved so restored logins keep the same identity.
+- Restore rejects absolute paths, `..` traversal, symlinks, unsafe hardlink targets, devices,
+  unknown entries and archives beyond the configured limits.
+
+The JSON export and the `.tar.gz` backup contain **plaintext proxy credentials**, and the
+backup also contains cookies and logged-in sessions. Neither is encrypted. Store backups
+on encrypted media, restrict permissions, and never commit them.
 
 ## Architecture
 
@@ -272,6 +295,9 @@ curl -H "x-vb-token: $VB_TOKEN" http://127.0.0.1:8787/api/profiles
 | GET | `/api/health` | Health check |
 | GET | `/api/system` | Chrome/wireproxy/platform/data-dir info |
 | GET | `/api/export` | Export all profile metadata |
+| POST | `/api/import` | Import profiles from an export (new ids) |
+| GET | `/api/backup` | Download a full `.tar.gz` backup |
+| POST | `/api/restore` | Restore a `.tar.gz` backup (additive) |
 | GET | `/api/profiles` | List profiles with runtime status |
 | POST | `/api/profiles` | Create a profile |
 | GET/PATCH/DELETE | `/api/profiles/:id` | Read/update/delete a profile |
@@ -298,12 +324,14 @@ npm run verify             # typecheck + proxy stack + fingerprint
 npm run verify:proxy       # HTTP/SOCKS5 auth + relay (no Chrome needed)
 npm run verify:fingerprint # launches Chrome and compares generated vs. observed values
 npm run verify:ui http://127.0.0.1:8787   # CRUD smoke test (server must be running)
+npm run verify:data http://127.0.0.1:8787 # export/import + backup/restore (server running)
+npm run verify:ui-data http://127.0.0.1:8787 # dashboard Data menu (server + Chrome)
 npm run verify:token                      # missing/invalid token messages (server with VB_TOKEN)
 npm run ui:shot http://127.0.0.1:8787 /tmp/vb.png
 ```
 
-`verify:ui` and `verify:token` require a running server; `verify:token` requires
-`VB_TOKEN`.
+`verify:ui`, `verify:data`, `verify:ui-data` and `verify:token` require a running server;
+`verify:token` requires `VB_TOKEN`. Use a throwaway `VB_DATA_DIR` for the data tests.
 
 ## Known limitations
 
@@ -314,6 +342,10 @@ npm run ui:shot http://127.0.0.1:8787 /tmp/vb.png
   devices; `navigator.plugins` is a stub, not a real `PluginArray`.
 - No team/RBAC/SSO or multi-machine sync yet.
 - Runtime sessions do not survive a server restart (browsing data does).
+- Backups require all profiles to be stopped and are **not encrypted**. JSON exports do
+  not include cookies; use a full backup for browser data.
+- A large backup is buffered by the browser when downloading; very large profiles may be
+  better copied with `tar` on the server.
 - `wireproxy` must be installed separately; no binary is bundled.
 - No unit tests/CI yet; the verify scripts are end-to-end smoke tests.
 

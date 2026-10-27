@@ -94,13 +94,21 @@ function expandHome(value: string): string {
   return value;
 }
 
-export function parseVpn(value: unknown, field = "vpn"): VpnConfig {
+export function parseVpn(
+  value: unknown,
+  field = "vpn",
+  opts: { mustExist?: boolean; resolve?: boolean } = {},
+): VpnConfig {
   const input = asObject(value, field);
   const kind = input.kind ?? "wireguard";
   if (kind !== "wireguard") badRequest(`${field}.kind must be "wireguard"`);
   const raw = stringField(input.configPath, `${field}.configPath`, { max: 4096 });
-  const configPath = path.resolve(expandHome(raw));
-  if (!fs.existsSync(configPath)) {
+  const mustExist = opts.mustExist ?? true;
+  const resolve = opts.resolve ?? true;
+  // Imports may come from another OS/machine: keep the original path instead
+  // of turning "C:\\..." into a Linux-relative path.
+  const configPath = resolve ? path.resolve(expandHome(raw)) : raw;
+  if (mustExist && !fs.existsSync(configPath)) {
     badRequest(`${field}.configPath does not exist: ${configPath}`);
   }
   return { kind: "wireguard", configPath };

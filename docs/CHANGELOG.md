@@ -5,19 +5,51 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ---
 
-## [Unreleased]
+## [0.3.0] — 2026-10-28
+
+### Added
+
+- **JSON import/export**: `POST /api/import` accepts exports or a bare profile array,
+  assigns new ids/data dirs, preserves fingerprints (including the seed), and skips invalid
+  profiles without aborting the batch.
+- **Full backup**: `GET /api/backup` streams `.tar.gz` with `profiles.json` and every
+  `user-data/` tree. Refuses to run while profiles are open; Chrome lock files and
+  non-regular files (symlinks/devices) are skipped so the archive is always restorable.
+- **Safe additive restore**: `POST /api/restore` validates tar paths, entry types, entry
+  count and size; rejects traversal, absolute paths, symlinks, unsafe hardlink targets and
+  devices; copies browser data to new id directories and writes the store atomically.
+- **Serialized store mutations**: concurrent imports/edits are queued so two snapshots cannot
+  rename over each other and drop profiles.
+- **Dashboard Data menu**: export/import JSON, download a full backup, restore an archive,
+  with confirmations and secret warnings.
+- Root `SECURITY.md` with private vulnerability reporting, scope, response expectations,
+  and safe harbor.
+- Marketing-oriented English README with a cloud-browser comparison and acceptable-use
+  section.
+- `npm run verify:data` (HTTP) and `npm run verify:ui-data` (dashboard) smoke tests.
 
 ### Changed
 
 - Documentation and dashboard messages are now **English-only** for international
   distribution. The Vietnamese docs remain in git history (`9f3e9a7`).
+- Version bumped to `0.3.0`; `@fastify/static` updated to 10.1.8 (security fixes).
 
-### Added
+### Security
 
-- Root `SECURITY.md` with private vulnerability reporting, scope, response expectations,
-  and safe harbor.
-- Marketing-oriented English README with a cloud-browser comparison and acceptable-use
-  section.
+- Restore is the only endpoint that accepts an archive: raw `application/gzip` streamed to
+  a temp file, never buffered; path traversal, symlinks, unsafe hardlink targets, devices,
+  unknown roots, oversized archives and >200k entries are rejected.
+- Backup refuses while any profile session exists, so SQLite/cookie files are not copied
+  mid-write.
+- Static files now use `dotfiles: "deny"`.
+- Profile deletion is confined to `profiles/<uuid>/`, never the profiles root or a parent
+  directory, even with a hand-edited store.
+
+### Known limitations
+
+- Backups are unencrypted and contain cookies + proxy passwords.
+- JSON export is metadata only; use a full backup for browser data.
+- Browser download buffers large backups in memory.
 
 ---
 

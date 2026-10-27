@@ -6,6 +6,105 @@ entry is organized by date; new entries go at the top. Not a replacement for the
 
 ---
 
+## 2026-10-28 — v0.3.0 data safety (import, backup, restore)
+
+### Context
+
+The top roadmap item was "never lose user data". v0.2.0 could export JSON metadata but
+had no import, no browser-data backup, and no restore path. This increment adds a complete,
+additive data flow without exposing the data directory to path traversal or lying about
+what a backup contains.
+
+### What was done
+
+- Added `src/lib/import.ts`:
+  - accepts `virtual-browser/export`, a `profiles.json` store, or a bare array;
+  - assigns a new id + `userDataDir` to every imported profile;
+  - preserves fingerprint/seed, proxy, VPN path, tags, notes, start URL and sanitized geo;
+  - per-profile validation: one bad profile is skipped, the batch continues;
+  - VPN paths are kept even when missing locally (launch fails loudly instead of silently
+    going direct), with an import warning.
+- Added `src/lib/backup.ts`:
+  - `GET /api/backup` streams `profiles.json` + `profiles/<id>/user-data` as `.tar.gz`;
+  - excludes Chrome `Singleton*` lock files and non-regular files (symlinks/devices);
+  - preserves safe hardlinks (restore accepts them only when their target is a safe file
+    that appeared earlier);
+  - refuses backups while any profile session exists;
+  - restore inspects entries before extraction; rejects `..`, absolute paths, backslashes,
+    symlinks, unsafe hardlink targets, devices, unknown roots, >200k entries and oversized
+    archives.
+- Added `src/server/routes/data.ts`:
+  - `POST /api/import` (JSON, 16 MiB default);
+  - `GET /api/backup` (gzip stream);
+  - `POST /api/restore` (raw `application/gzip` streamed to a temp file).
+  - Restores are additive and use one atomic store write.
+- Added a serialized store mutation queue so concurrent imports/edits cannot interleave
+  in-memory changes or rename stale snapshots over each other; `initStore` writes an empty
+  `profiles.json` on a fresh data directory so a zero-profile backup is valid.
+- Hardened profile deletion: it removes only `profiles/<valid-id>/`, never the profiles root,
+  even if a hand-edited store points `userDataDir` at a parent directory.
+- Added dashboard **Data** menu: export/import JSON, backup, restore, with confirmations.
+- Upgraded `@fastify/static` 8 → 10.1.8 after `npm audit` reported a high-severity
+  path-traversal/guard-bypass advisory in the old range; set `dotfiles: "deny"`.
+- Added `scripts/verify-data.ts` and `scripts/verify-ui-data.ts`.
+
+### Bugs found and fixed during verification
+
+1. **Throwing from `tar`'s `onentry` crashed the whole server.**
+   A malicious archive (`../evil.txt`) raised `HttpError` inside the parser event loop; it
+   was an `uncaughtException`, not a rejected request. `inspectBackup()` now records the
+   first failure and throws only after listing finishes. `verify:data` builds a real
+   traversal archive with `tar.c({ prefix: "../" })` and asserts HTTP 400 + no file escape.
+2. **Import body check rejected valid JSON.** Fastify parses `application/json` into an
+   object, not a Buffer/string. Removed the Buffer check and pass `req.body` to
+   `parseImportPayload`.
+3. **`@fastify/static` v10 changed `setHeaders(res, ...)` to `(reply, ...)`.** Updated the
+   HTML `Cache-Control` hook and added `dotfiles: "deny"`.
+4. **File-picker cancel left a pending promise.** Added a focus-return fallback that
+   resolves `null` when the dialog closes without a selection.
+
+### Verification
+
+```text
+$ npm run typecheck
+typecheck OK
+
+$ npm run verify:data -- http://127.0.0.1:8799
+  ok  archive path validation
+  ok  traversal archive is rejected
+  ok  create profile + browser data marker
+  ok  JSON export
+  ok  JSON import (new id, preserved fingerprint/proxy)
+  ok  full backup (~1 KB)
+  ok  full restore (browser data copied, ids remapped, links handled)
+  ok  invalid profile is skipped without aborting the import
+OK: data import/export/backup/restore verified.
+
+$ npm run verify:ui-data -- http://127.0.0.1:8799
+  ok  data menu opens
+  ok  export JSON download
+  ok  import JSON via dashboard
+  ok  backup download via dashboard
+  ok  restore archive via dashboard
+OK: dashboard data flows verified.
+
+$ # concurrent addProfiles test
+{ inMemory: 40, onDisk: 40 }
+
+$ npm audit --omit=dev
+found 0 vulnerabilities
+```
+
+### Notes / next
+
+- Backup archives are unencrypted by design for v0.3.0; the UI states this. Encryption is
+  a candidate for v0.6.
+- Restore is additive; a future "replace all" mode needs an explicit two-step confirmation
+  and a pre-restore automatic backup.
+- Next roadmap items: groups/sorting, bulk actions, pinned fingerprint badges/presets.
+
+---
+
 ## 2026-10-28 — English localization for international distribution
 
 ### Context

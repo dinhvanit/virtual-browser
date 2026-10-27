@@ -8,6 +8,7 @@ import { safeEqual } from "../util/random.js";
 import { profileRoutes } from "./routes/profiles.js";
 import { runtimeRoutes } from "./routes/runtime.js";
 import { systemRoutes } from "./routes/system.js";
+import { dataRoutes } from "./routes/data.js";
 import { HttpError } from "./validate.js";
 
 export async function buildServer() {
@@ -96,16 +97,26 @@ export async function buildServer() {
     prefix: "/",
     index: ["index.html"],
     cacheControl: false,
-    setHeaders(res, filePath) {
+    dotfiles: "deny",
+    setHeaders(reply, filePath) {
       if (path.extname(filePath) === ".html") {
-        res.setHeader("Cache-Control", "no-store");
+        reply.header("Cache-Control", "no-store");
       }
     },
   });
 
+  // Raw backup uploads. The route enforces the configured size limit while
+  // streaming to a temp file, so archives are never buffered in memory.
+  for (const type of ["application/gzip", "application/x-gzip"]) {
+    app.addContentTypeParser(type, (_req, payload, done) => {
+      done(null, payload);
+    });
+  }
+
   await app.register(systemRoutes);
   await app.register(profileRoutes);
   await app.register(runtimeRoutes);
+  await app.register(dataRoutes);
 
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith("/api/")) {

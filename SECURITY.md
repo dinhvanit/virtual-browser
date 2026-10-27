@@ -7,8 +7,8 @@ WireGuard configs. Security reports are welcome and taken seriously.
 
 | Version | Supported |
 | --- | --- |
-| `0.2.x` | ✅ |
-| `< 0.2` | ❌ |
+| `0.3.x` | ✅ |
+| `< 0.3` | ❌ |
 
 Only the latest release on `main` receives security fixes.
 
@@ -49,7 +49,10 @@ This is a volunteer project; no bug bounty is offered.
 In scope:
 
 - Authentication/authorization bypass of the local API (`VB_TOKEN`, CSRF/Host guards).
-- Path traversal or arbitrary file read/write through profile, store, or export endpoints.
+- Path traversal or arbitrary file read/write through profile, store, backup, restore, or
+  export endpoints.
+- Archive extraction issues (traversal, symlinks, unsafe hardlinks, devices, zip bombs) in
+  `POST /api/restore`.
 - Command injection through proxy/VPN configuration or profile fields.
 - Relay/upstream proxy flaws that leak credentials or allow SSRF beyond the intended
   profile network path.

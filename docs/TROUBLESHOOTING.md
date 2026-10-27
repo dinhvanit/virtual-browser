@@ -246,6 +246,39 @@ rm -rf data/profiles/<id>
 This only happens when multiple processes write at the same time. Run only **one** server
 per `VB_DATA_DIR`. Restore from backup.
 
+### Backup returns 409
+
+At least one profile session exists (running or starting). Stop the listed profiles and
+retry. This guarantees Chrome's SQLite/cookie files are not copied mid-write.
+
+### Restore rejects an archive (`400`)
+
+The backup must contain `profiles.json` at the root and only `profiles/<uuid>/...` entries.
+The server rejects absolute paths, `..`, backslashes, symlinks, unsafe hardlink targets,
+devices, unknown roots, archives over `VB_MAX_BACKUP_MB` and more than
+`VB_MAX_BACKUP_ENTRIES` entries. Use
+an archive created by **Backup all data**; do not re-tar a directory with a different root
+layout.
+
+```bash
+tar tzf backup.tar.gz | head
+# expected:
+# profiles.json
+# profiles/<uuid>/user-data/...
+```
+
+### Restore returns `413 Request Entity Too Large`
+
+The compressed archive or its declared uncompressed size exceeds the limits. Raise
+`VB_MAX_BACKUP_MB` (and restart), or split/clean the profile data before backing up.
+
+### Import says `imported: 0` with skipped entries
+
+Each profile is validated independently. The `skipped[].reason` field names the bad field
+(for example `startUrl must use http or https`). Fix the source export or edit the profile
+after import. A missing VPN config path is only a warning; the profile imports and launch
+fails until the path is fixed.
+
 ---
 
 ## 7. UI

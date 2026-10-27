@@ -75,12 +75,21 @@ function osLabel(os) {
 async function api(path, options = {}) {
   const headers = {};
   if (TOKEN) headers["x-vb-token"] = TOKEN;
-  if (options.body !== undefined) headers["content-type"] = "application/json";
+  if (options.body !== undefined) {
+    headers["content-type"] = options.raw
+      ? options.contentType || "application/octet-stream"
+      : "application/json";
+  }
 
   const response = await fetch(path, {
     method: options.method || "GET",
     headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body:
+      options.body === undefined
+        ? undefined
+        : options.raw
+          ? options.body
+          : JSON.stringify(options.body),
   });
 
   if (response.status === 204) return null;
@@ -90,17 +99,44 @@ async function api(path, options = {}) {
     ? await response.json().catch(() => null)
     : await response.text();
 
-  if (!response.ok) {
-    let message =
-      (data && data.error) || (typeof data === "string" && data) || `HTTP ${response.status}`;
-    if (response.status === 401) {
-      message = TOKEN
-        ? "Invalid token or token changed. Reopen the dashboard with /?token=<VB_TOKEN>."
-        : "The server requires a token. Open the dashboard with /?token=<VB_TOKEN> (the VB_TOKEN value used at startup).";
-    }
-    throw new Error(message);
-  }
+  if (!response.ok) throw new Error(responseError(response, data));
   return data;
+}
+
+function responseError(response, data) {
+  let message =
+    (data && data.error) || (typeof data === "string" && data) || `HTTP ${response.status}`;
+  if (response.status === 401) {
+    message = TOKEN
+      ? "Invalid token or token changed. Reopen the dashboard with /?token=<VB_TOKEN>."
+      : "The server requires a token. Open the dashboard with /?token=<VB_TOKEN> (the VB_TOKEN value used at startup).";
+  }
+  return message;
+}
+
+async function download(path, fallbackName) {
+  const headers = TOKEN ? { "x-vb-token": TOKEN } : {};
+  const response = await fetch(path, { headers });
+  if (!response.ok) {
+    const type = response.headers.get("content-type") || "";
+    const data = type.includes("application/json")
+      ? await response.json().catch(() => null)
+      : await response.text();
+    throw new Error(responseError(response, data));
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const name = match?.[1] || fallbackName;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /* ------------------------------------------------------------------ */
@@ -660,6 +696,157 @@ async function confirmDelete(profile) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Data: export / import / backup / restore                            */
+/* ------------------------------------------------------------------ */
+
+function closeDataMenu() {
+  $("#data-menu").classList.add("hidden");
+  $("#data-btn").setAttribute("aria-expanded", "false");
+}
+
+function openFilePicker(input) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (file) => {
+      if (settled) return;
+      settled = true;
+      input.removeEventListener("change", onChange);
+      window.removeEventListener("focus", onFocus);
+      resolve(file);
+    };
+    const onChange = () => finish(input.files?.[0] || null);
+    const onFocus = () => {
+      // There is no standard "file dialog cancelled" event. When focus returns
+      // without a selection, treat it as a cancel instead of leaving the promise
+      // pending forever.
+      setTimeout(() => {
+        if (!input.files?.length) finish(null);
+      }, 400);
+    };
+
+    input.value = "";
+    input.addEventListener("change", onChange);
+    window.addEventListener("focus", onFocus);
+    input.click();
+  });
+}
+
+function importSummary(data) {
+  let message = `Imported ${data.imported} profile${data.imported === 1 ? "" : "s"}.`;
+  if (data.skipped?.length) {
+    const details = data.skipped
+      .slice(0, 3)
+      .map((item) => `${item.name} (${item.reason})`)
+      .join("; ");
+    message += ` Skipped ${data.skipped.length}: ${details}`;
+    if (data.skipped.length > 3) message += "; …";
+  }
+  return message;
+}
+
+function reportImportWarnings(data) {
+  if (!data.warnings?.length) return;
+  for (const warning of data.warnings) {
+    console.warn(`[import] ${warning.profile}: ${warning.message}`);
+  }
+  toast(
+    `${data.warnings.length} import warning${data.warnings.length === 1 ? "" : "s"}; see the browser console.`,
+    "info",
+    8000,
+  );
+}
+
+async function exportProfiles() {
+  try {
+    const date = new Date().toISOString().slice(0, 10);
+    await download("/api/export", `virtual-browser-${date}.json`);
+    toast("Profile export downloaded (contains proxy credentials).", "ok", 7000);
+  } catch (err) {
+    toast(err.message, "error", 9000);
+  }
+}
+
+async function backupAll() {
+  const active = state.profiles.filter((profile) =>
+    ["running", "starting"].includes(profile.runtime?.state),
+  );
+  if (active.length) {
+    toast(
+      `Stop ${active.length} running profile${active.length === 1 ? "" : "s"} before backing up.`,
+      "error",
+      8000,
+    );
+    return;
+  }
+
+  const ok = await confirmDialog({
+    title: "Download a full backup?",
+    message:
+      "The archive contains Chrome cookies, logins, local storage, proxy credentials and VPN paths. Store it somewhere encrypted. Backups are only consistent when profiles are stopped.",
+    confirmLabel: "Download backup",
+  });
+  if (!ok) return;
+
+  try {
+    const date = new Date().toISOString().slice(0, 10);
+    await download("/api/backup", `virtual-browser-backup-${date}.tar.gz`);
+    toast("Full backup downloaded. Treat it as a secret.", "ok", 8000);
+  } catch (err) {
+    toast(err.message, "error", 9000);
+  }
+}
+
+async function importProfiles() {
+  const file = await openFilePicker($("#import-file"));
+  if (!file) return;
+
+  let payload;
+  try {
+    payload = JSON.parse(await file.text());
+  } catch {
+    toast("That file is not valid JSON.", "error", 8000);
+    return;
+  }
+
+  try {
+    const data = await api("/api/import", { method: "POST", body: payload });
+    toast(importSummary(data), data.imported ? "ok" : "error", 12_000);
+    reportImportWarnings(data);
+    await refresh();
+  } catch (err) {
+    toast(err.message, "error", 10_000);
+  }
+}
+
+async function restoreBackup() {
+  const file = await openFilePicker($("#restore-file"));
+  if (!file) return;
+
+  const ok = await confirmDialog({
+    title: "Restore a backup?",
+    message:
+      "Profiles and browser data are added as new profiles; existing profiles are not overwritten. A backup from another machine may contain VPN paths that need fixing before launch.",
+    confirmLabel: "Restore backup",
+  });
+  if (!ok) return;
+
+  toast("Restoring backup — this can take a while for large profiles…", "info", 20_000);
+  try {
+    const data = await api("/api/restore", {
+      method: "POST",
+      body: file,
+      raw: true,
+      contentType: "application/gzip",
+    });
+    toast(importSummary(data), data.imported ? "ok" : "error", 12_000);
+    reportImportWarnings(data);
+    await refresh();
+  } catch (err) {
+    toast(err.message, "error", 12_000);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Confirm dialog                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -962,6 +1149,34 @@ function wireEvents() {
   $("#new-profile-btn").addEventListener("click", openCreate);
   $("#empty-create").addEventListener("click", openCreate);
 
+  $("#data-btn").addEventListener("click", (event) => {
+    event.stopPropagation();
+    const menu = $("#data-menu");
+    const willOpen = menu.classList.contains("hidden");
+    closeMenus();
+    closeDataMenu();
+    if (willOpen) {
+      menu.classList.remove("hidden");
+      $("#data-btn").setAttribute("aria-expanded", "true");
+    }
+  });
+  $("#export-json").addEventListener("click", () => {
+    closeDataMenu();
+    void exportProfiles();
+  });
+  $("#import-json").addEventListener("click", () => {
+    closeDataMenu();
+    void importProfiles();
+  });
+  $("#backup-all").addEventListener("click", () => {
+    closeDataMenu();
+    void backupAll();
+  });
+  $("#restore-backup").addEventListener("click", () => {
+    closeDataMenu();
+    void restoreBackup();
+  });
+
   form.addEventListener("submit", submitForm);
   $("#test-proxy-btn").addEventListener("click", testProxy);
   $("#proxy-enabled").addEventListener("change", (event) => setProxyEnabled(event.target.checked));
@@ -978,6 +1193,7 @@ function wireEvents() {
     if (!event.target.closest(".menu") && !event.target.closest('[data-action="menu"]')) {
       closeMenus();
     }
+    if (!event.target.closest(".data-wrap")) closeDataMenu();
   });
 
   document.addEventListener("keydown", (event) => {
@@ -991,6 +1207,7 @@ function wireEvents() {
         return;
       }
       closeMenus();
+      closeDataMenu();
     }
 
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {

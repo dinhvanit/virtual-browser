@@ -43,6 +43,9 @@ FNV-1a hash → mulberry32 PRNG
 ```
 
 - Same seed → same fingerprint (reproducible, easy to debug).
+- Import/restore preserves the fingerprint **and its seed**, even though the profile receives
+  a new local id. This keeps restored logins on the same identity; duplicating a profile
+  creates a new seed instead.
 - "Regenerate fingerprint" creates a new seed (`newId()`), so all choices change.
 - Changing `osProfile` regenerates with the old seed + an OS suffix; the stable "personality"
   is preserved.

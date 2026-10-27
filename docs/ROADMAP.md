@@ -51,15 +51,16 @@ acceptance criteria here.
 
 ---
 
-## v0.3 — Restore & data (high priority)
+## v0.3 — Restore & data (in progress)
 
 ### Import / backup / restore
-- [ ] `POST /api/import` accepts an export file and creates new profiles (does not overwrite existing ids).
-- [ ] Optional `GET /api/export?full=1` bundles user-data too (`.tar.gz`) — with a clear security
-      warning.
-- [ ] Backup/restore from the UI, with confirmation.
-- [ ] **Acceptance**: export 3 profiles → delete → import → metadata/proxy/fingerprint match;
-      user-data is restored only when full is selected.
+- [x] `POST /api/import` accepts an export file and creates new profiles (does not overwrite existing ids).
+- [x] Full backup `GET /api/backup` bundles `profiles.json` + every `user-data/` tree as `.tar.gz`.
+- [x] Additive `POST /api/restore` with tar traversal/size/type validation and new ids.
+- [x] Backup/restore from the dashboard **Data** menu, with confirmation and secret warnings.
+- [x] **Acceptance**: `npm run verify:data` covers export → import → backup → restore with browser data,
+      fingerprint/seed preservation, id remapping, and a malicious archive; `npm run verify:ui-data`
+      covers the dashboard flow.
 
 ### Profile organization
 - [ ] Groups/folders (one level), assigned by drag-and-drop or dropdown.

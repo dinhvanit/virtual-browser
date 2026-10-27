@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 export const ROOT = process.cwd();
 export const DATA_DIR = process.env.VB_DATA_DIR
@@ -88,3 +88,30 @@ export const GEO_TIMEOUT_MS = Number(process.env.VB_GEO_TIMEOUT_MS ?? 9000);
 export const VPN_BOOT_TIMEOUT_MS = Number(
   process.env.VB_VPN_BOOT_TIMEOUT_MS ?? 10000,
 );
+
+/* ------------------------------------------------------------------ */
+/* Import / backup limits                                              */
+/* ------------------------------------------------------------------ */
+
+function positiveMb(name: string, fallback: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(value) || value <= 0) return fallback * 1024 * 1024;
+  return Math.round(value * 1024 * 1024);
+}
+
+function positiveInt(name: string, fallback: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+/** Maximum JSON import payload. Metadata only; browser data is not included. */
+export const MAX_IMPORT_BYTES = positiveMb("VB_MAX_IMPORT_MB", 16);
+
+/** Maximum compressed backup/restore archive size. */
+export const MAX_BACKUP_BYTES = positiveMb("VB_MAX_BACKUP_MB", 2048);
+
+/** Hard cap on entries in a restore archive (zip-bomb / inode exhaustion guard). */
+export const MAX_BACKUP_ENTRIES = positiveInt("VB_MAX_BACKUP_ENTRIES", 200_000);
+
+/** Hard cap on the sum of declared uncompressed entry sizes. */
+export const MAX_BACKUP_UNCOMPRESSED_BYTES = MAX_BACKUP_BYTES * 4;

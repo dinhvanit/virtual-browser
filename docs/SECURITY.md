@@ -31,6 +31,7 @@ multi-tenancy, and users with root privileges.
 | API token (`VB_TOKEN`) | env + browser localStorage | 🟠 medium |
 | Profile metadata | `profiles.json` | 🟡 low–medium |
 | Thumbnail images | RAM, never written to disk | 🟠 (may contain sensitive content) |
+| Backup archive | user-chosen location | 🔴 high (cookies + proxy passwords) |
 | wireproxy logs | RAM (100 lines per profile) | 🟡 |
 
 ---
@@ -71,6 +72,10 @@ multi-tenancy, and users with root privileges.
 - Atomic JSON writes (tmp + rename) — no file corruption on crash.
 - No telemetry, and no calls to external services except the geo provider.
 - Screencast frames stay in RAM only and are never written to disk.
+- Full backups require every profile to be stopped; Chrome lock files are excluded.
+- Restore validates archive paths/types before extraction, streams uploads to a temp file,
+  rejects symlinks, unsafe hardlinks, devices, traversal and absolute paths, and never writes
+  outside the staging or profile-data directories.
 
 ---
 
@@ -80,6 +85,8 @@ multi-tenancy, and users with root privileges.
 | --- | --- | --- |
 | Plain-text proxy password | readable if the file or a backup leaks | `chmod 700 data`, `chmod 600 data/profiles.json`, disk encryption, no backups to public cloud storage |
 | Relay has no auth | processes under the same user can use it while a profile is running | accepted for local use; do not bind to the LAN; stop profiles when not in use |
+| Unencrypted backup | `.tar.gz` contains cookies, logins and plaintext proxy passwords | store on encrypted media, restrict permissions, delete old copies |
+| Restore from an untrusted archive | imported profile metadata/proxy settings are attacker-controlled | restore only archives you created; review VPN/proxy fields after importing |
 | API unauthenticated by default | websites can attempt calls, but the CSRF guard blocks writes; responses to GET cannot be read due to CORS | enable `VB_TOKEN` if the machine has multiple users or untrusted processes |
 | Token in localStorage | XSS on the UI itself (does any input render raw HTML? no) | the UI escapes every field; CSP is not enabled; keep the UI code simple |
 | Sensitive thumbnails | anyone who sees the dashboard screen | lock the machine, do not share |
@@ -111,6 +118,7 @@ or open the UI and then set `localStorage.vb_token` in DevTools.
 - [ ] Update Chrome regularly; restart the server after updating.
 - [ ] Do not commit `data/`, `.conf`, or `.env`.
 - [ ] Encrypted backups; never upload backups to public services.
+- [ ] Stop profiles before a full backup; verify a test restore on a throwaway `VB_DATA_DIR`.
 - [ ] Delete old, unused profiles (removes both cookies and metadata).
 - [ ] Check `browserleaks.com/webrtc` after changing proxy/VPN.
 - [ ] Rotate the proxy password/WireGuard key regularly and whenever exposure is suspected.

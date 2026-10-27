@@ -159,6 +159,30 @@ textarea {
   margin-left: auto;
 }
 
+.data-wrap {
+  position: relative;
+}
+
+.data-menu {
+  top: calc(100% + 8px);
+  right: 0;
+  bottom: auto;
+  min-width: 252px;
+}
+
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-soft);
+}
+
+.menu-note {
+  padding: 7px 10px 5px;
+  color: var(--muted-2);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
 /* ------------------------------------------------------------------ */
 /* Buttons                                                             */
 /* ------------------------------------------------------------------ */

@@ -41,19 +41,4 @@ export const systemRoutes: FastifyPluginAsync = async (app) => {
     proxyTypes: ["http", "https", "socks5"],
     geoProviders: ["ipwho.is", "ipapi.co"],
   }));
-
-  app.get("/api/export", async (_req, reply) => {
-    const payload = {
-      format: "virtual-browser/export",
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      appVersion: VERSION,
-      profiles: listProfiles(),
-    };
-    reply.header(
-      "Content-Disposition",
-      `attachment; filename="virtual-browser-${new Date().toISOString().slice(0, 10)}.json"`,
-    );
-    return payload;
-  });
 };

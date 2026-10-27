@@ -24,7 +24,7 @@ alongside [NETWORK](NETWORK.md) and [FINGERPRINT](FINGERPRINT.md).
 | --- | --- |
 | `src/config.ts` | paths, Chrome/wireproxy detection, env, timeouts, version |
 | `src/types.ts` | all shared data contracts |
-| `src/store.ts` | atomic read/write of `profiles.json`, safe creation/removal of user-data-dir |
+| `src/store.ts` | serialized atomic read/write of `profiles.json`, batch import, safe creation/removal of user-data-dir |
 | `src/util/random.ts` | FNV-1a hash, mulberry32 PRNG, seed picker, id |
 | `src/lib/fingerprint.ts` | generate fingerprint from seed, apply geo, init script, UA metadata |
 | `src/lib/geo-locale.ts` | country → locale/timezone mapping, canonical timezone, IANA validation |
@@ -33,12 +33,14 @@ alongside [NETWORK](NETWORK.md) and [FINGERPRINT](FINGERPRINT.md).
 | `src/lib/relay.ts` | local HTTP forward proxy, forwarding CONNECT + absolute-form requests |
 | `src/lib/geo.ts` | IP/geo lookup through the correct proxy, 2-provider fallback, `checkProxy` |
 | `src/lib/vpn.ts` | spawn/stop `wireproxy`, parse `[Socks5] BindAddress`, wait for the port |
+| `src/lib/import.ts` | validate imported profiles, new ids, fingerprint/seed preservation, per-profile skip |
+| `src/lib/backup.ts` | tar.gz backup stream, archive inspection/extraction, traversal/size guards |
 | `src/runtime.ts` | session map, launch/stop, Playwright context, screencast, tabs, navigate |
 | `src/server/index.ts` | Fastify, static UI, auth token, error handler, graceful shutdown |
 | `src/server/routes/*.ts` | REST endpoints grouped by area |
 | `src/server/validate.ts` | input validation, `HttpError` |
 | `public/*` | vanilla JS dashboard (no build step) |
-| `scripts/verify-*.ts` | fingerprint and proxy stack verification |
+| `scripts/verify-*.ts` | end-to-end checks: fingerprint, proxy, UI CRUD, data backup/restore |
 
 Dependency flow (arrow = import):
 
@@ -151,6 +153,23 @@ Until an IP check runs, `geo` is empty; the dashboard shows "IP not checked yet"
 
 Duplicating a profile: new id, new seed, copy proxy/VPN/tags/notes, **do not** copy
 user-data.
+
+### 4.1 Import and restore flow
+
+```text
+POST /api/import (JSON)                 POST /api/restore (application/gzip)
+  ├─ parse export/store/array             ├─ stream to DATA_DIR/.restore-*/backup.tar.gz
+  ├─ per profile: validate                ├─ inspect entries (paths, types, size, count)
+  ├─ new id + userDataDir                 ├─ extract to a fresh staging dir
+  ├─ preserve fingerprint/seed            ├─ parse staging/profiles.json
+  └─ addProfiles() in one write           ├─ per profile: new id + copy user-data
+                                          └─ addProfiles() in one write
+```
+
+Both flows are **additive**: existing ids are never overwritten. A single invalid profile
+is skipped with a reason; the rest of the batch continues. Restore copies only
+`profiles/<uuid>` trees and ignores `userDataDir` from the archive, so an archive cannot
+choose a write path.
 
 ---
 
@@ -314,14 +333,20 @@ error   ──dispose──► keep the error entry for the UI to read; the next
 ## 9. Storage & durability
 
 - JSON is written through a temp file and then `rename`d → avoids corrupting the file midway.
+- Profile mutations (add/save/remove, including batch import) are serialized through an
+  in-process queue, so concurrent requests cannot rename stale snapshots over each other.
+- A fresh data dir gets an empty `profiles.json` on startup, so a zero-profile backup is
+  valid.
 - No migration framework; `DB.version = 1`. When the schema changes you must:
   1. Bump the version.
   2. Write a migrate function in `initStore()` (read → transform → write back).
   3. Record it in [CHANGELOG](CHANGELOG.md) + [PROCESS](PROCESS.md).
-- `removeProfile()` only deletes the directory if the resolved path is inside `PROFILES_DIR`
-  (path traversal protection).
+- `removeProfile()` checks the profile id and only deletes `PROFILES_DIR/<id>/` after
+  confirming the stored `userDataDir` is inside it; it never removes the profiles root.
 - `profiles.json` contains secrets (proxy passwords). Do not commit `data/` (already covered
   by `.gitignore`).
+- Full backups require every profile to be stopped; restore validates paths/types/count/size
+  before extracting and is additive.
 
 ---
 

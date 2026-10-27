@@ -38,7 +38,7 @@ re-read `status.tabs` after every operation.
 ```json
 {
   "ok": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "uptimeSec": 42,
   "profiles": 3
 }
@@ -48,7 +48,7 @@ re-read `status.tabs` after every operation.
 
 ```json
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "node": "v22.22.1",
   "platform": "linux/x64",
   "hostname": "workstation",
@@ -69,23 +69,122 @@ re-read `status.tabs` after every operation.
 
 ### `GET /api/export`
 
-Download the metadata JSON for all profiles (no runtime, no cookies):
+Download the metadata JSON for all profiles (no runtime, no cookies, no absolute
+`userDataDir`):
 
 ```json
 {
   "format": "virtual-browser/export",
   "version": 1,
   "exportedAt": "2026-10-27T16:00:00.000Z",
-  "appVersion": "0.2.0",
+  "appVersion": "0.3.0",
   "profiles": [/* Profile[] */]
 }
 ```
 
 Header `Content-Disposition: attachment; filename="virtual-browser-YYYY-MM-DD.json"`.
 
+> The export contains proxy credentials and VPN paths. Treat it as a secret.
+
 ---
 
-## 2. Profiles
+## 2. Import, backup and restore
+
+### `POST /api/import`
+
+Imports an export file (the same shape as `GET /api/export`). It also accepts a
+`profiles.json` store and a bare array of profiles.
+
+```http
+POST /api/import
+Content-Type: application/json
+
+{ "format": "virtual-browser/export", "version": 1, "profiles": [ ... ] }
+```
+
+- Every profile gets a **new local id** and a new `userDataDir`; existing profiles are
+  never overwritten.
+- The fingerprint (including its seed), proxy, tags, notes, start URL, VPN path and geo
+  metadata are preserved where valid.
+- A profile with invalid required fields is skipped; the rest of the import continues.
+- At most 500 profiles per request. The default body limit is 16 MiB
+  (`VB_MAX_IMPORT_MB`).
+
+```json
+{
+  "ok": true,
+  "imported": 2,
+  "profiles": [/* new profiles */],
+  "skipped": [{ "name": "broken", "reason": "startUrl must use http or https" }],
+  "warnings": [{ "profile": "US shop", "message": "VPN config is not present..." }]
+}
+```
+
+Returns `201`. Invalid JSON, unsupported format/version or too many profiles returns
+`400`.
+
+### `GET /api/backup`
+
+Downloads a complete `.tar.gz` backup:
+
+```text
+profiles.json
+profiles/<uuid>/user-data/...   # cookies, localStorage, cache, extensions
+```
+
+- All profiles must be **stopped**; otherwise `409` lists the running profiles.
+- Chrome lock files (`SingletonLock`, `SingletonCookie`, `SingletonSocket`) are excluded.
+- Non-regular files (symlinks, devices, sockets) are skipped so the archive is always
+  restorable by this server.
+- WireGuard `.conf` files normally live outside `data/` and are **not** included; back them
+  up separately.
+- The archive contains cookies, logins, proxy passwords and VPN paths. It is **not
+  encrypted**: store it encrypted and never commit it.
+- Streaming archive size is capped by `VB_MAX_BACKUP_MB` (default 2048).
+
+Header `Content-Disposition: attachment; filename="virtual-browser-backup-YYYY-MM-DD.tar.gz"`.
+
+### `POST /api/restore`
+
+Restores a `.tar.gz` backup. Send the file as the raw request body:
+
+```http
+POST /api/restore
+Content-Type: application/gzip
+
+<binary tar.gz>
+```
+
+The restore is **additive**:
+
+1. The archive is streamed to a temporary file (never buffered in memory).
+2. `profiles.json` and the staging tree are validated before extraction.
+3. Path traversal, absolute paths, symlinks, unsafe hardlink targets, devices, oversized
+   archives and unknown entries are rejected with `400`/`413`.
+4. Every profile is imported with a new id; its `profiles/<old-id>` tree is copied to the
+   new data directory.
+5. `profiles.json` is updated in one atomic write.
+
+```json
+{
+  "ok": true,
+  "imported": 2,
+  "profiles": [/* new profiles */],
+  "skipped": [],
+  "warnings": [{ "profile": "US shop", "message": "VPN config is not present..." }]
+}
+```
+
+Returns `201`. Existing profiles are never overwritten. A backup from another OS may
+contain VPN paths that need fixing before launch; the profile is still imported with a
+warning.
+
+Restore limits: `VB_MAX_BACKUP_MB` (compressed size), `VB_MAX_BACKUP_ENTRIES`
+(default 200000) and 4× the compressed limit for declared uncompressed size.
+
+---
+
+## 3. Profiles
 
 ### `GET /api/profiles`
 
@@ -296,7 +395,7 @@ Tests a proxy ad hoc, **storing nothing** (used by the create/edit form):
 
 ---
 
-## 3. Runtime
+## 4. Runtime
 
 ### `POST /api/profiles/:id/launch`
 
@@ -380,7 +479,7 @@ Closes the tab. If the active tab is closed, the runtime selects the first remai
 
 ---
 
-## 4. Static UI
+## 5. Static UI
 
 | Route | Content |
 | --- | --- |

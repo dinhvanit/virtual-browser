@@ -38,6 +38,8 @@ npm run verify:fingerprint  # needs Chrome + Internet
 npm start               # http://127.0.0.1:8787
 # second terminal, after the server is running:
 npm run verify:ui http://127.0.0.1:8787
+npm run verify:data http://127.0.0.1:8787      # export/import + backup/restore
+npm run verify:ui-data http://127.0.0.1:8787   # dashboard Data menu
 # check token handling (server must run with VB_TOKEN):
 VB_TOKEN=secret npm start   # separate port, e.g. VB_PORT=8812
 npm run verify:token
@@ -176,6 +178,8 @@ Example: "add a `colorScheme` field to the profile create form".
 - [ ] `npm run typecheck`
 - [ ] `npm run verify` (proxy + fingerprint) if the change touches networking/fingerprint
 - [ ] `npm run verify:ui <url>` (server must be running)
+- [ ] `npm run verify:data <url>` if import/export/backup changed
+- [ ] `npm run verify:ui-data <url>` if the dashboard data menu changed
 - [ ] API smoke (section 6)
 - [ ] Manual UI smoke (section 7)
 
@@ -399,6 +403,8 @@ Principle: **never delete the user-data-dir** during migration.
 - [ ] `npm run verify:proxy`
 - [ ] `npm run verify:fingerprint` (if Chrome is available)
 - [ ] `npm run verify:ui` against a freshly started server
+- [ ] `npm run verify:data` against a throwaway `VB_DATA_DIR`
+- [ ] `npm run verify:ui-data` against a throwaway `VB_DATA_DIR`
 - [ ] `npm run verify:token` against a server with `VB_TOKEN` (separate port)
 - [ ] API smoke from section 6 on a clean `VB_DATA_DIR`.
 - [ ] UI smoke from section 7.
@@ -407,7 +413,7 @@ Principle: **never delete the user-data-dir** during migration.
 - [ ] `docs/API.md` matches the actual routes (`grep "app\.\(get\|post\|patch\|delete\)" src/server/routes`).
 - [ ] The README env table matches `src/config.ts`.
 - [ ] No `data/`, log, or `.env` files in the commit.
-- [ ] Tag: `git tag v0.2.0 && git push --tags`.
+- [ ] Tag: `git tag v0.3.0 && git push --tags`.
 
 ---
 
@@ -428,26 +434,36 @@ A task is only "done" when:
 
 ## 12. Backup & restore
 
-Backup:
+Backup (dashboard or CLI):
 
 ```bash
-# Stop the server first so the JSON does not change mid-copy
+# Dashboard: Data → Backup all data (.tar.gz), with all profiles stopped.
+# CLI:
+curl -sf http://127.0.0.1:8787/api/backup -o vb-backup-$(date +%F).tar.gz
+
+# Stop the server first if you prefer a raw filesystem copy:
 tar -czf vb-backup-$(date +%F).tar.gz data/
 ```
 
-Restore:
+Restore (additive, new ids):
 
 ```bash
-tar -xzf vb-backup-YYYY-MM-DD.tar.gz
-# make sure the user running the server has read/write permissions
+# Dashboard: Data → Restore backup (.tar.gz) → confirm.
+curl -sf -X POST http://127.0.0.1:8787/api/restore \
+  -H 'content-type: application/gzip' \
+  --data-binary @vb-backup-YYYY-MM-DD.tar.gz
 ```
 
-Export metadata (without cookies):
+Restore never overwrites an existing profile id. It validates paths/types before extraction;
+reject archives from untrusted sources. Backups are unencrypted — store them encrypted.
+
+Export/import metadata (without cookies):
 
 ```bash
 curl -sf http://127.0.0.1:8787/api/export -o vb-export.json
+curl -sf -X POST http://127.0.0.1:8787/api/import \
+  -H 'content-type: application/json' --data-binary @vb-export.json
 ```
 
-There is currently **no import**. To restore metadata, stop the server and merge manually into
-`data/profiles.json` (keep `id`, make sure `userDataDir` is correct). The import feature is on the
-[ROADMAP](ROADMAP.md).
+JSON export contains no cookies or local storage; use the full `.tar.gz` backup for browser
+data. See [API](API.md#2-import-backup-and-restore).

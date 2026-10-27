@@ -33,10 +33,26 @@
       </div>
 
       <div class="top-actions">
+        <div class="data-wrap">
+          <button class="btn ghost" id="data-btn" title="Import, export, backup" aria-expanded="false">
+            ⇅ Data
+          </button>
+          <div class="menu data-menu hidden" id="data-menu">
+            <button type="button" id="export-json">Export profiles (.json)</button>
+            <button type="button" id="import-json">Import profiles (.json)…</button>
+            <span class="menu-sep"></span>
+            <button type="button" id="backup-all">Backup all data (.tar.gz)</button>
+            <button type="button" id="restore-backup">Restore backup (.tar.gz)…</button>
+            <span class="menu-note">Backups contain cookies and proxy credentials.</span>
+          </div>
+        </div>
         <button class="btn ghost" id="refresh-btn" title="Reload profiles">↻ Refresh</button>
         <button class="btn primary" id="new-profile-btn">+ New profile</button>
       </div>
     </header>
+
+    <input type="file" id="import-file" accept=".json,application/json" hidden />
+    <input type="file" id="restore-file" accept=".tar.gz,.tgz,application/gzip" hidden />
 
     <div id="banner" class="banner hidden"></div>
 
@@ -74,7 +90,7 @@
     </main>
 
     <footer>
-      <span>Virtual Browser <b id="foot-version">v0.2.0</b></span>
+      <span>Virtual Browser <b id="foot-version">v0.3.0</b></span>
       <span>data <b id="foot-data">./data</b></span>
       <span id="foot-platform"></span>
       <span id="foot-headless"></span>
